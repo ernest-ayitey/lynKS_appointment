@@ -29,6 +29,31 @@ export interface SessionTokenPayload {
   twoStepVerified: boolean;
 }
 
+/**
+ * Minimal shape `computeStaffPermissions` needs — matches a `Role` loaded
+ * with `rolePermissions: { include: { permission: true } }`.
+ */
+export interface RoleWithPermissions {
+  rolePermissions: Array<{ allowed: boolean; permission: { key: string } }>;
+}
+
+/**
+ * Flattens a staff role's `RolePermission` rows into the `permission.key`
+ * strings allowed for that role. Rows with `allowed: false` (and
+ * permissions with no row at all) are excluded — a missing row means "not
+ * allowed". Single source of truth, shared by `TokenService.buildStaffClaims`
+ * (refresh-token rotation) and `AuthService.resolveStaffRoleLocation`
+ * (staff role/location resolution), so both paths compute the same
+ * permissions the same way.
+ */
+export function computeStaffPermissions(role: RoleWithPermissions | null | undefined): string[] {
+  return (
+    role?.rolePermissions
+      .filter((rolePermission) => rolePermission.allowed)
+      .map((rolePermission) => rolePermission.permission.key) ?? []
+  );
+}
+
 @Injectable()
 export class TokenService {
   constructor(
@@ -149,16 +174,19 @@ export class TokenService {
       },
     });
 
-    const permissions =
-      staffUser?.role.rolePermissions
-        .filter((rolePermission) => rolePermission.allowed)
-        .map((rolePermission) => rolePermission.permission.key) ?? [];
+    const permissions = computeStaffPermissions(staffUser?.role);
 
     return {
       sub: staffUserId,
       subjectType: 'STAFF',
       permissions,
-      staffUserLocationId: staffUser?.staffUserLocations[0]?.locationId,
+      // The id of the StaffUserLocation row itself (not Location.id) — must
+      // match the semantics AuthService.resolveStaffRoleLocation uses for
+      // the same claim name. No schema support exists for persisting which
+      // location a staff member most recently chose across a token
+      // refresh, so this arbitrarily keeps using whichever row sorts
+      // first; that's an accepted limitation, not something this fixes.
+      staffUserLocationId: staffUser?.staffUserLocations[0]?.id,
     };
   }
 

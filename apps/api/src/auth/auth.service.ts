@@ -9,7 +9,7 @@ import { compare } from 'bcrypt';
 import { OtpPurpose, RefreshTokenSubjectType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from './otp.service';
-import { TokenService } from './token.service';
+import { computeStaffPermissions, TokenService } from './token.service';
 
 export interface RequestOtpResult {
   requestId: string;
@@ -294,9 +294,7 @@ export class AuthService {
       throw new BadRequestException('staffUserLocationId does not belong to this staff user');
     }
 
-    const permissions = staffUser.role.rolePermissions
-      .filter((rolePermission) => rolePermission.allowed)
-      .map((rolePermission) => rolePermission.permission.key);
+    const permissions = computeStaffPermissions(staffUser.role);
 
     const accessToken = this.tokenService.issueAccessToken({
       sub: staffUser.id,
