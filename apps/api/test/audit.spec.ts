@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
-import { AuditService } from '../src/audit/audit.service';
+import { AuditService, AuditEntry } from '../src/audit/audit.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 describe('AuditService', () => {
@@ -31,7 +31,7 @@ describe('AuditService', () => {
   });
 
   it('persists an AuditLog row with the given actor, action, entity, and metadata', async () => {
-    const entry = {
+    const entry: AuditEntry = {
       actorType: 'STAFF',
       actorId: 'actor-123',
       action: 'CREATE',
@@ -58,7 +58,7 @@ describe('AuditService', () => {
   });
 
   it('persists an AuditLog without actorId when provided as null', async () => {
-    const entry = {
+    const entry: AuditEntry = {
       actorType: 'SYSTEM',
       actorId: null,
       action: 'AUTO_CANCEL',
@@ -84,7 +84,7 @@ describe('AuditService', () => {
   });
 
   it('persists an AuditLog without metadata when not provided', async () => {
-    const entry = {
+    const entry: AuditEntry = {
       actorType: 'ACCOUNT',
       actorId: 'account-101',
       action: 'BOOK_APPOINTMENT',

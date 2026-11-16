@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface AuditEntry {
-  actorType: string;
+  actorType: 'ACCOUNT' | 'STAFF' | 'SYSTEM';
   actorId: string | null;
   action: string;
   entityType: string;
