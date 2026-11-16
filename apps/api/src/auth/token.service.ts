@@ -9,12 +9,24 @@ import { hmacSha256Hex } from './hash.util';
 const REFRESH_TOKEN_BYTES = 48;
 const REFRESH_TOKEN_TTL_DAYS = 30;
 const ACCESS_TOKEN_TTL = '15m';
+const SESSION_TOKEN_TTL = '10m';
 
 export interface AccessTokenClaims {
   sub: string;
   subjectType: 'ACCOUNT' | 'STAFF';
   permissions: string[];
   staffUserLocationId?: string;
+}
+
+/**
+ * Payload for the short-lived "session token" used between staff
+ * password-login and completion of 2-step verification. Deliberately
+ * distinct (and distinguishable) from `AccessTokenClaims` — it carries no
+ * permissions and is never accepted as an API bearer token.
+ */
+export interface SessionTokenPayload {
+  staffUserId: string;
+  twoStepVerified: boolean;
 }
 
 @Injectable()
@@ -28,6 +40,31 @@ export class TokenService {
   issueAccessToken(claims: AccessTokenClaims): string {
     const { sub, ...payload } = claims;
     return this.jwt.sign(payload, { subject: sub, expiresIn: ACCESS_TOKEN_TTL });
+  }
+
+  /** Short-lived (10 min) token bridging staff password-login and 2-step verification. */
+  issueSessionToken(payload: SessionTokenPayload): string {
+    return this.jwt.sign(payload, { expiresIn: SESSION_TOKEN_TTL });
+  }
+
+  /**
+   * Verifies `token` was issued by `issueSessionToken` (correct signature,
+   * not expired) and carries the expected shape. Returns null for any
+   * other token (malformed, wrong secret, expired, or a differently
+   * shaped JWT such as an access token) rather than throwing.
+   */
+  verifySessionToken(token: string): SessionTokenPayload | null {
+    let decoded: Record<string, unknown>;
+    try {
+      decoded = this.jwt.verify<Record<string, unknown>>(token);
+    } catch {
+      return null;
+    }
+
+    if (typeof decoded.staffUserId !== 'string' || typeof decoded.twoStepVerified !== 'boolean') {
+      return null;
+    }
+    return { staffUserId: decoded.staffUserId, twoStepVerified: decoded.twoStepVerified };
   }
 
   async issueRefreshToken(

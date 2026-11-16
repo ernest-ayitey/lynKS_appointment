@@ -6,10 +6,21 @@ import {
   Post,
   UnauthorizedException,
 } from '@nestjs/common';
-import { AuthService, RefreshResult, RequestOtpResult, VerifyOtpResult } from './auth.service';
+import {
+  AuthService,
+  RefreshResult,
+  RequestOtpResult,
+  StaffLoginResult,
+  StaffTwoStepRequestResult,
+  StaffTwoStepVerifyResult,
+  VerifyOtpResult,
+} from './auth.service';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { RefreshDto } from './dto/refresh.dto';
+import { StaffLoginDto } from './dto/staff-login.dto';
+import { StaffTwoStepRequestDto } from './dto/staff-two-step-request.dto';
+import { StaffTwoStepVerifyDto } from './dto/staff-two-step-verify.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -45,5 +56,27 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(@Body() dto: RefreshDto): Promise<void> {
     await this.authService.logout(dto.refreshToken);
+  }
+
+  @Post('staff/login')
+  @HttpCode(HttpStatus.OK)
+  staffLogin(@Body() dto: StaffLoginDto): Promise<StaffLoginResult> {
+    return this.authService.staffLogin(dto.email, dto.password);
+  }
+
+  @Post('staff/two-step/request')
+  @HttpCode(HttpStatus.OK)
+  staffTwoStepRequest(
+    @Body() dto: StaffTwoStepRequestDto,
+  ): Promise<StaffTwoStepRequestResult> {
+    return this.authService.staffTwoStepRequest(dto.sessionToken);
+  }
+
+  @Post('staff/two-step/verify')
+  @HttpCode(HttpStatus.OK)
+  staffTwoStepVerify(
+    @Body() dto: StaffTwoStepVerifyDto,
+  ): Promise<StaffTwoStepVerifyResult> {
+    return this.authService.staffTwoStepVerify(dto.sessionToken, dto.requestId, dto.code);
   }
 }
