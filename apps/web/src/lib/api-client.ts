@@ -1,3 +1,5 @@
+import { authStorage } from './auth-storage';
+
 export class ApiError extends Error {
   status: number;
 
@@ -9,6 +11,12 @@ export class ApiError extends Error {
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const REFRESH_PATH = '/auth/refresh';
+
+interface RefreshResponse {
+  accessToken: string;
+  refreshToken: string;
+}
 
 async function extractErrorMessage(response: Response): Promise<string> {
   try {
@@ -28,12 +36,63 @@ async function extractErrorMessage(response: Response): Promise<string> {
   return response.statusText || 'Request failed';
 }
 
-async function post<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+function rawPost(path: string, body: unknown): Promise<Response> {
+  const accessToken = authStorage.getAccessToken();
+  return fetch(`${API_BASE_URL}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
     body: JSON.stringify(body),
   });
+}
+
+/**
+ * Calls POST /auth/refresh with the stored refresh token. On success,
+ * stores the new tokens and returns true. On failure, leaves storage
+ * untouched (the caller decides whether to clear it) and returns false.
+ *
+ * Deliberately uses `fetch` directly rather than `post()` — this must
+ * never route back through `post`'s own 401-triggers-refresh handling,
+ * or a failing refresh would recurse into itself indefinitely.
+ */
+async function refreshTokens(): Promise<boolean> {
+  const response = await fetch(`${API_BASE_URL}${REFRESH_PATH}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refreshToken: authStorage.getRefreshToken() }),
+  });
+
+  if (!response.ok) {
+    return false;
+  }
+
+  const tokens = (await response.json()) as RefreshResponse;
+  authStorage.setTokens(tokens);
+  return true;
+}
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const response = await rawPost(path, body);
+
+  if (response.status === 401) {
+    const refreshed = await refreshTokens();
+    if (!refreshed) {
+      authStorage.clearTokens();
+      throw new ApiError(response.status, await extractErrorMessage(response));
+    }
+
+    // Retry the original request exactly once, now with the refreshed
+    // access token. Its outcome (success or failure) is returned/thrown
+    // as-is — it is never itself retried, so a second failure here does
+    // not trigger another refresh attempt.
+    const retryResponse = await rawPost(path, body);
+    if (!retryResponse.ok) {
+      throw new ApiError(retryResponse.status, await extractErrorMessage(retryResponse));
+    }
+    return (await retryResponse.json()) as T;
+  }
 
   if (!response.ok) {
     throw new ApiError(response.status, await extractErrorMessage(response));
