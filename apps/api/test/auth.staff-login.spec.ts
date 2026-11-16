@@ -24,12 +24,19 @@ describe('Staff password login + 2-step verification (e2e)', () => {
     return `staff-login-test-${Date.now()}-${emailCounter}@example.com`;
   }
 
+  let phoneCounter = 0;
+  function uniquePhone(): string {
+    phoneCounter += 1;
+    return `+1555${Date.now()}${phoneCounter}`.slice(0, 20);
+  }
+
   async function createStaffUser(overrides: Partial<StaffUser> = {}): Promise<StaffUser> {
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const staffUser = await prisma.staffUser.create({
       data: {
         name: 'Test Staff',
         email: uniqueEmail(),
+        phone: uniquePhone(),
         passwordHash,
         roleId: role.id,
         twoStepEnabled: false,
@@ -148,7 +155,7 @@ describe('Staff password login + 2-step verification (e2e)', () => {
   });
 
   describe('POST /auth/staff/two-step/request', () => {
-    it('triggers an OTP generation against the staff user email and returns a requestId', async () => {
+    it('triggers an OTP generation against the staff user phone and returns a requestId', async () => {
       const staffUser = await createStaffUser({ twoStepEnabled: true });
       const loginResponse = await request(app.getHttpServer())
         .post('/auth/staff/login')
@@ -162,7 +169,7 @@ describe('Staff password login + 2-step verification (e2e)', () => {
       expect(typeof response.body.requestId).toBe('string');
 
       const otp = await prisma.otpCode.findUnique({ where: { id: response.body.requestId } });
-      expect(otp?.destination).toBe(staffUser.email);
+      expect(otp?.destination).toBe(staffUser.phone);
       expect(otp?.purpose).toBe(OtpPurpose.STAFF_TWO_STEP);
     });
 
@@ -189,7 +196,7 @@ describe('Staff password login + 2-step verification (e2e)', () => {
       const sessionToken: string = loginResponse.body.sessionToken;
 
       const { requestId, code } = await otpService.generate(
-        staffUser.email,
+        staffUser.phone,
         OtpPurpose.STAFF_TWO_STEP,
       );
 
@@ -221,7 +228,7 @@ describe('Staff password login + 2-step verification (e2e)', () => {
       expect(response.status).toBe(401);
     });
 
-    it('rejects a session token that was not produced by a matching login', async () => {
+    it('rejects a session token that was not produced by a matching login (garbage token)', async () => {
       const { requestId, code } = await loginAndRequestTwoStep();
 
       const response = await request(app.getHttpServer())
@@ -229,6 +236,36 @@ describe('Staff password login + 2-step verification (e2e)', () => {
         .send({ sessionToken: 'not-a-real-session-token', requestId, code });
 
       expect(response.status).toBe(401);
+    });
+
+    it('rejects a session token that was not produced by a matching login (another staff user\'s valid OTP)', async () => {
+      // Staff member A has a real, valid session token. Staff member B
+      // has a real, valid, unconsumed OTP requestId + code. A's session
+      // token must not be "verified" by redeeming B's OTP — the two were
+      // never associated by a single login flow, so this must be
+      // rejected even though both the session token and the OTP are
+      // independently genuine and unexpired.
+      const staffUserA = await createStaffUser({ twoStepEnabled: true });
+      const loginResponseA = await request(app.getHttpServer())
+        .post('/auth/staff/login')
+        .send({ email: staffUserA.email, password: PASSWORD });
+      const sessionTokenA: string = loginResponseA.body.sessionToken;
+
+      const { staffUser: staffUserB, requestId: requestIdB, code: codeB } =
+        await loginAndRequestTwoStep();
+      expect(staffUserB.id).not.toBe(staffUserA.id);
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/staff/two-step/verify')
+        .send({ sessionToken: sessionTokenA, requestId: requestIdB, code: codeB });
+
+      expect(response.status).toBe(401);
+
+      // Prove codeB was genuinely correct and still unconsumed, i.e. the
+      // rejection above was because of the identity mismatch, not
+      // because codeB was wrong or already used.
+      const otpStillValid = await otpService.verify(requestIdB, codeB);
+      expect(otpStillValid).toBe(true);
     });
   });
 });

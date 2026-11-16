@@ -134,9 +134,7 @@ export class AuthService {
 
   /**
    * Issues an OTP (via the shared `OtpService`, same SMS-OTP
-   * infrastructure as patient login) against the staff user's email —
-   * `StaffUser` has no phone field in the schema, so email is the only
-   * contact channel available for `STAFF_TWO_STEP` delivery.
+   * infrastructure as patient login) against the staff user's phone.
    */
   async staffTwoStepRequest(sessionToken: string): Promise<StaffTwoStepRequestResult> {
     const payload = this.tokenService.verifySessionToken(sessionToken);
@@ -152,14 +150,14 @@ export class AuthService {
     }
 
     const { requestId, code } = await this.otpService.generate(
-      staffUser.email,
+      staffUser.phone,
       OtpPurpose.STAFF_TWO_STEP,
     );
 
-    // No SMS/email gateway exists yet (out of scope for this task) — log
-    // the code so it can be observed in development. Never return it in
-    // the HTTP response.
-    this.logger.debug(`Staff 2-step OTP for ${staffUser.email} (requestId=${requestId}): ${code}`);
+    // No SMS gateway exists yet (out of scope for this task) — log the
+    // code so it can be observed in development. Never return it in the
+    // HTTP response.
+    this.logger.debug(`Staff 2-step OTP for ${staffUser.phone} (requestId=${requestId}): ${code}`);
 
     return { requestId };
   }
@@ -172,6 +170,26 @@ export class AuthService {
     const payload = this.tokenService.verifySessionToken(sessionToken);
     if (!payload) {
       throw new UnauthorizedException('Invalid or expired session token');
+    }
+
+    const staffUser = await this.prisma.staffUser.findUnique({
+      where: { id: payload.staffUserId },
+    });
+    if (!staffUser) {
+      throw new UnauthorizedException('Invalid session');
+    }
+
+    // Confirm the OTP being redeemed was actually sent to *this* staff
+    // user's phone. `otpService.verify` only checks the code against the
+    // requestId — it has no notion of identity — so without this check
+    // staff member A's valid session token could be "verified" by
+    // supplying staff member B's pending OTP requestId + code, without A
+    // ever having received B's code. Checked before the code comparison
+    // so a mismatched OTP is rejected regardless of whether the code
+    // itself happens to be correct.
+    const otp = await this.prisma.otpCode.findUnique({ where: { id: requestId } });
+    if (!otp || otp.destination !== staffUser.phone) {
+      throw new UnauthorizedException('Invalid or expired code');
     }
 
     const isValid = await this.otpService.verify(requestId, code);
