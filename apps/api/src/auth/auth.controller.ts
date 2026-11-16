@@ -11,6 +11,7 @@ import {
   RefreshResult,
   RequestOtpResult,
   StaffLoginResult,
+  StaffRoleLocationResult,
   StaffTwoStepRequestResult,
   StaffTwoStepVerifyResult,
   VerifyOtpResult,
@@ -21,6 +22,7 @@ import { RefreshDto } from './dto/refresh.dto';
 import { StaffLoginDto } from './dto/staff-login.dto';
 import { StaffTwoStepRequestDto } from './dto/staff-two-step-request.dto';
 import { StaffTwoStepVerifyDto } from './dto/staff-two-step-verify.dto';
+import { SelectRoleLocationDto } from './dto/select-role-location.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -78,5 +80,13 @@ export class AuthController {
     @Body() dto: StaffTwoStepVerifyDto,
   ): Promise<StaffTwoStepVerifyResult> {
     return this.authService.staffTwoStepVerify(dto.sessionToken, dto.requestId, dto.code);
+  }
+
+  @Post('staff/role-location')
+  @HttpCode(HttpStatus.OK)
+  resolveStaffRoleLocation(
+    @Body() dto: SelectRoleLocationDto,
+  ): Promise<StaffRoleLocationResult> {
+    return this.authService.resolveStaffRoleLocation(dto.sessionToken, dto.staffUserLocationId);
   }
 }

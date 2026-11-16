@@ -1,4 +1,10 @@
-import { ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { compare } from 'bcrypt';
 import { OtpPurpose, RefreshTokenSubjectType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -33,6 +39,23 @@ export interface StaffTwoStepRequestResult {
 export interface StaffTwoStepVerifyResult {
   sessionToken: string;
 }
+
+export interface RoleLocationOption {
+  staffUserLocationId: string;
+  roleName: string;
+  locationName: string;
+}
+
+export interface StaffFinalTokens {
+  accessToken: string;
+  refreshToken: string;
+}
+
+export interface StaffRoleLocationOptions {
+  options: RoleLocationOption[];
+}
+
+export type StaffRoleLocationResult = StaffFinalTokens | StaffRoleLocationOptions;
 
 @Injectable()
 export class AuthService {
@@ -203,5 +226,89 @@ export class AuthService {
     });
 
     return { sessionToken: newSessionToken };
+  }
+
+  /**
+   * Resolves which `StaffUserLocation` row (role + location pairing) an
+   * already-logged-in staff user is acting as, and issues final
+   * access/refresh tokens scoped to it.
+   *
+   * - Exactly one row: that row is used unconditionally — `staffUserLocationId`
+   *   is ignored even if supplied. A single-role/location staff user must
+   *   never be shown a picker (see plan's Review Focus).
+   * - More than one row and no `staffUserLocationId`: returns the list of
+   *   options for the client to present as a picker.
+   * - More than one row and a `staffUserLocationId` that belongs to this
+   *   staff user: issues final tokens scoped to it.
+   * - More than one row and a `staffUserLocationId` that does not belong to
+   *   this staff user: 400.
+   */
+  async resolveStaffRoleLocation(
+    sessionToken: string,
+    staffUserLocationId?: string,
+  ): Promise<StaffRoleLocationResult> {
+    const payload = this.tokenService.verifySessionToken(sessionToken);
+    if (!payload) {
+      throw new UnauthorizedException('Invalid or expired session token');
+    }
+
+    const staffUser = await this.prisma.staffUser.findUnique({
+      where: { id: payload.staffUserId },
+      include: {
+        role: { include: { rolePermissions: { include: { permission: true } } } },
+        staffUserLocations: { include: { location: true } },
+      },
+    });
+    if (!staffUser) {
+      throw new UnauthorizedException('Invalid session');
+    }
+
+    if (staffUser.twoStepEnabled && !payload.twoStepVerified) {
+      throw new UnauthorizedException('Two-step verification is required');
+    }
+
+    const rows = staffUser.staffUserLocations;
+
+    // More than one assignment and the client hasn't chosen yet: hand back
+    // the options instead of tokens. A staff user with a single assignment
+    // never reaches this branch — see the exactly-one-row case below.
+    if (rows.length > 1 && !staffUserLocationId) {
+      return {
+        options: rows.map((row) => ({
+          staffUserLocationId: row.id,
+          roleName: staffUser.role.name,
+          locationName: row.location.name,
+        })),
+      };
+    }
+
+    // Exactly one assignment: use it directly, ignoring any
+    // staffUserLocationId the client may have supplied. Otherwise, the
+    // client must have chosen one of the (multiple) assignments above.
+    const chosenRow =
+      rows.length === 1 ? rows[0] : rows.find((row) => row.id === staffUserLocationId);
+    if (!chosenRow) {
+      if (rows.length === 0) {
+        throw new ForbiddenException('No location assigned to this staff user');
+      }
+      throw new BadRequestException('staffUserLocationId does not belong to this staff user');
+    }
+
+    const permissions = staffUser.role.rolePermissions
+      .filter((rolePermission) => rolePermission.allowed)
+      .map((rolePermission) => rolePermission.permission.key);
+
+    const accessToken = this.tokenService.issueAccessToken({
+      sub: staffUser.id,
+      subjectType: 'STAFF',
+      permissions,
+      staffUserLocationId: chosenRow.id,
+    });
+    const refreshToken = await this.tokenService.issueRefreshToken(
+      RefreshTokenSubjectType.STAFF,
+      staffUser.id,
+    );
+
+    return { accessToken, refreshToken };
   }
 }
