@@ -65,6 +65,26 @@ describe('ChooseRoleLocationPage', () => {
     });
   });
 
+  it('shows an inline error and stores nothing if the response is options instead of tokens', async () => {
+    // Supplying a staffUserLocationId can only yield final tokens per
+    // the backend's contract, so this is an unexpected response rather
+    // than a live code path — it must surface as an error, not write
+    // "undefined" tokens into storage (the same guard the staff
+    // sign-in and two-step pages apply).
+    vi.mocked(authApi.resolveRoleLocation).mockResolvedValue({ options: defaultOptions });
+    const setTokensSpy = vi.spyOn(authStorage, 'setTokens');
+    const user = userEvent.setup();
+
+    renderPickerPage();
+
+    await user.click(screen.getByRole('radio', { name: /doctor/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(setTokensSpy).not.toHaveBeenCalled();
+    expect(screen.queryByText('Staff dashboard')).not.toBeInTheDocument();
+  });
+
   it('shows an inline error and does not navigate when resolveRoleLocation rejects', async () => {
     vi.mocked(authApi.resolveRoleLocation).mockRejectedValue(new ApiError(400, 'Invalid selection'));
     const user = userEvent.setup();

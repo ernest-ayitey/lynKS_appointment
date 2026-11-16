@@ -77,7 +77,10 @@ model StaffUser {
   id             String    @id @default(cuid())
   name           String
   email          String    @unique
-  phone          String
+  // Unique because staff 2-step verification binds an OTP to a staff
+  // user by its destination phone number — two staff rows sharing a
+  // phone would make that identity check meaningless.
+  phone          String    @unique
   passwordHash   String
   roleId         String
   twoStepEnabled Boolean   @default(false)

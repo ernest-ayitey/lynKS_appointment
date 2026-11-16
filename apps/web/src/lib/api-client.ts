@@ -12,6 +12,7 @@ export class ApiError extends Error {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const REFRESH_PATH = '/auth/refresh';
+const AUTH_PATH_PREFIX = '/auth/';
 
 interface RefreshResponse {
   accessToken: string;
@@ -73,10 +74,27 @@ async function refreshTokens(): Promise<boolean> {
   return true;
 }
 
+/**
+ * Whether a 401 from `path` means "the access token is stale, try
+ * refreshing" rather than an ordinary domain error.
+ *
+ * The `/auth/` endpoints are how a session is *created* — a wrong
+ * password on `/auth/staff/login`, or a wrong code on
+ * `/auth/patient/verify-otp` or the staff 2-step verify, legitimately
+ * answers 401 while carrying no session to refresh. Treating those as
+ * stale-token 401s fires a pointless `POST /auth/refresh` on every
+ * failed sign-in attempt, and would clear a *valid* session's tokens
+ * (via the `clearTokens()` on refresh failure) for an already-signed-in
+ * user who mistypes a code.
+ */
+function canRefreshOn(path: string): boolean {
+  return !path.startsWith(AUTH_PATH_PREFIX);
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const response = await rawPost(path, body);
 
-  if (response.status === 401) {
+  if (response.status === 401 && canRefreshOn(path)) {
     const refreshed = await refreshTokens();
     if (!refreshed) {
       authStorage.clearTokens();

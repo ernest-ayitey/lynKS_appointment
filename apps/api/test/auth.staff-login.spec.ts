@@ -16,6 +16,9 @@ describe('Staff password login + 2-step verification (e2e)', () => {
   let role: Role;
 
   const createdStaffUserIds: string[] = [];
+  // OTP rows created with a purpose other than STAFF_TWO_STEP, which the
+  // blanket cleanup in afterAll does not cover.
+  const createdOtherPurposeOtpIds: string[] = [];
   const PASSWORD = 'correct-password-123';
 
   let emailCounter = 0;
@@ -64,6 +67,7 @@ describe('Staff password login + 2-step verification (e2e)', () => {
 
   afterAll(async () => {
     await prisma.otpCode.deleteMany({ where: { purpose: OtpPurpose.STAFF_TWO_STEP } });
+    await prisma.otpCode.deleteMany({ where: { id: { in: createdOtherPurposeOtpIds } } });
     await prisma.staffUser.deleteMany({ where: { id: { in: createdStaffUserIds } } });
     await app.close();
   });
@@ -266,6 +270,49 @@ describe('Staff password login + 2-step verification (e2e)', () => {
       // because codeB was wrong or already used.
       const otpStillValid = await otpService.verify(requestIdB, codeB);
       expect(otpStillValid).toBe(true);
+    });
+
+    it('rejects a PATIENT_LOGIN code with 401, even when it was sent to this staff user\'s phone', async () => {
+      // The destination check alone would pass here (the patient OTP was
+      // issued against the very same phone number), so only the purpose
+      // check can reject this. A staff member who also signs in as a
+      // patient from the same phone must not be able to complete 2-step
+      // with a patient login code.
+      const staffUser = await createStaffUser({ twoStepEnabled: true });
+      const loginResponse = await request(app.getHttpServer())
+        .post('/auth/staff/login')
+        .send({ email: staffUser.email, password: PASSWORD });
+
+      const { requestId, code } = await otpService.generate(
+        staffUser.phone,
+        OtpPurpose.PATIENT_LOGIN,
+      );
+      createdOtherPurposeOtpIds.push(requestId);
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/staff/two-step/verify')
+        .send({ sessionToken: loginResponse.body.sessionToken, requestId, code });
+
+      expect(response.status).toBe(401);
+
+      // The code was genuinely correct and is still unconsumed — the
+      // rejection was the purpose mismatch, nothing else.
+      expect(await otpService.verify(requestId, code)).toBe(true);
+    });
+
+    it('rejects two-step verification for a staff user deactivated after login with 401', async () => {
+      const { staffUser, sessionToken, requestId, code } = await loginAndRequestTwoStep();
+
+      await prisma.staffUser.update({
+        where: { id: staffUser.id },
+        data: { deactivatedAt: new Date() },
+      });
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/staff/two-step/verify')
+        .send({ sessionToken, requestId, code });
+
+      expect(response.status).toBe(401);
     });
   });
 });

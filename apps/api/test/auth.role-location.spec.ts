@@ -72,6 +72,9 @@ describe('Staff role/location resolution (e2e)', () => {
   });
 
   afterAll(async () => {
+    await prisma.refreshToken.deleteMany({
+      where: { subjectId: { in: createdStaffUserIds } },
+    });
     await prisma.staffUserLocation.deleteMany({
       where: { staffUserId: { in: createdStaffUserIds } },
     });
@@ -201,6 +204,98 @@ describe('Staff role/location resolution (e2e)', () => {
       const response = await request(app.getHttpServer())
         .post('/auth/staff/role-location')
         .send({ sessionToken: 'not-a-real-session-token' });
+
+      expect(response.status).toBe(401);
+    });
+
+    it('rejects role-location resolution for a staff user deactivated after login with 401', async () => {
+      // Having a StaffUserLocation row is not evidence the owning staff
+      // user is still active: a session token issued before
+      // deactivation must not be exchangeable for final tokens.
+      const staffUser = await createStaffUser();
+      await prisma.staffUserLocation.create({
+        data: { staffUserId: staffUser.id, locationId: locations[0].id },
+      });
+      const sessionToken = await loginAndGetSessionToken(staffUser);
+
+      await prisma.staffUser.update({
+        where: { id: staffUser.id },
+        data: { deactivatedAt: new Date() },
+      });
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/staff/role-location')
+        .send({ sessionToken });
+
+      expect(response.status).toBe(401);
+    });
+  });
+
+  // STAFF-subject refresh-token rotation (TokenService.buildStaffClaims via
+  // rotateRefreshToken). The ACCOUNT path is covered by auth.patient.spec.ts.
+  describe('POST /auth/refresh for a STAFF subject', () => {
+    async function signInFully(
+      staffUser: StaffUser,
+    ): Promise<{ accessToken: string; refreshToken: string }> {
+      const sessionToken = await loginAndGetSessionToken(staffUser);
+      const response = await request(app.getHttpServer())
+        .post('/auth/staff/role-location')
+        .send({ sessionToken });
+      expect(response.status).toBe(200);
+      return {
+        accessToken: response.body.accessToken,
+        refreshToken: response.body.refreshToken,
+      };
+    }
+
+    function decode(token: string): Record<string, unknown> {
+      return tokenService['jwt'].decode(token) as Record<string, unknown>;
+    }
+
+    it('rotates a staff refresh token into a fresh access token with the same staff claims', async () => {
+      const staffUser = await createStaffUser();
+      const row = await prisma.staffUserLocation.create({
+        data: { staffUserId: staffUser.id, locationId: locations[0].id },
+      });
+      const { accessToken, refreshToken } = await signInFully(staffUser);
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .send({ refreshToken });
+
+      expect(response.status).toBe(200);
+      expect(typeof response.body.accessToken).toBe('string');
+      expect(response.body.refreshToken).not.toBe(refreshToken);
+
+      const rotated = decode(response.body.accessToken);
+      expect(rotated.sub).toBe(staffUser.id);
+      expect(rotated.subjectType).toBe('STAFF');
+      expect(rotated.staffUserLocationId).toBe(row.id);
+      // Permissions are recomputed from the role, so they must match the
+      // ones the original sign-in issued.
+      expect(rotated.permissions).toEqual(decode(accessToken).permissions);
+
+      // A real API access token, not a session token: `typ: 'access'`
+      // is what JwtStrategy requires (see auth.permissions-guard.spec.ts).
+      expect(rotated.typ).toBe('access');
+      expect(tokenService.verifySessionToken(response.body.accessToken)).toBeNull();
+    });
+
+    it('stops rotating a staff refresh token once the staff user is deactivated', async () => {
+      const staffUser = await createStaffUser();
+      await prisma.staffUserLocation.create({
+        data: { staffUserId: staffUser.id, locationId: locations[0].id },
+      });
+      const { refreshToken } = await signInFully(staffUser);
+
+      await prisma.staffUser.update({
+        where: { id: staffUser.id },
+        data: { deactivatedAt: new Date() },
+      });
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .send({ refreshToken });
 
       expect(response.status).toBe(401);
     });

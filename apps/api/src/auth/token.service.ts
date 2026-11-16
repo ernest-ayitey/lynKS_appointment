@@ -11,6 +11,16 @@ const REFRESH_TOKEN_TTL_DAYS = 30;
 const ACCESS_TOKEN_TTL = '15m';
 const SESSION_TOKEN_TTL = '10m';
 
+/**
+ * Access tokens and session tokens are both JWTs signed with the same
+ * `JWT_SECRET`, so a signature check alone cannot tell them apart. Every
+ * token carries a `typ` claim naming which kind it is, and each consumer
+ * rejects the other kind: `JwtStrategy` only accepts `access`,
+ * `verifySessionToken` only accepts `session`.
+ */
+export const ACCESS_TOKEN_TYPE = 'access';
+export const SESSION_TOKEN_TYPE = 'session';
+
 export interface AccessTokenClaims {
   sub: string;
   subjectType: 'ACCOUNT' | 'STAFF';
@@ -22,7 +32,8 @@ export interface AccessTokenClaims {
  * Payload for the short-lived "session token" used between staff
  * password-login and completion of 2-step verification. Deliberately
  * distinct (and distinguishable) from `AccessTokenClaims` — it carries no
- * permissions and is never accepted as an API bearer token.
+ * permissions and is never accepted as an API bearer token: it is signed
+ * with `typ: 'session'`, which `JwtStrategy` rejects.
  */
 export interface SessionTokenPayload {
   staffUserId: string;
@@ -64,12 +75,18 @@ export class TokenService {
 
   issueAccessToken(claims: AccessTokenClaims): string {
     const { sub, ...payload } = claims;
-    return this.jwt.sign(payload, { subject: sub, expiresIn: ACCESS_TOKEN_TTL });
+    return this.jwt.sign(
+      { ...payload, typ: ACCESS_TOKEN_TYPE },
+      { subject: sub, expiresIn: ACCESS_TOKEN_TTL },
+    );
   }
 
   /** Short-lived (10 min) token bridging staff password-login and 2-step verification. */
   issueSessionToken(payload: SessionTokenPayload): string {
-    return this.jwt.sign(payload, { expiresIn: SESSION_TOKEN_TTL });
+    return this.jwt.sign(
+      { ...payload, typ: SESSION_TOKEN_TYPE },
+      { expiresIn: SESSION_TOKEN_TTL },
+    );
   }
 
   /**
@@ -86,6 +103,9 @@ export class TokenService {
       return null;
     }
 
+    if (decoded.typ !== SESSION_TOKEN_TYPE) {
+      return null;
+    }
     if (typeof decoded.staffUserId !== 'string' || typeof decoded.twoStepVerified !== 'boolean') {
       return null;
     }
@@ -111,7 +131,10 @@ export class TokenService {
    * Validates `rawToken`, revokes it, and issues a fresh access/refresh
    * pair for the same subject. Returns null if the token is unknown,
    * already revoked (including a previously-rotated token being
-   * replayed), or expired.
+   * replayed), expired, or if the subject it belongs to can no longer
+   * hold a session (a deleted or deactivated staff user) — rotation must
+   * not keep minting valid access tokens for a staff member who has been
+   * deactivated since the refresh token was issued.
    */
   async rotateRefreshToken(
     rawToken: string,
@@ -121,12 +144,19 @@ export class TokenService {
       return null;
     }
 
+    // Claims are built before revoking, so a rotation refused because
+    // the subject is gone/deactivated leaves the (useless) token as it
+    // was rather than half-applying the rotation.
+    const claims = await this.buildClaims(existing.subjectType, existing.subjectId);
+    if (!claims) {
+      return null;
+    }
+
     await this.prisma.refreshToken.update({
       where: { id: existing.id },
       data: { revokedAt: new Date() },
     });
 
-    const claims = await this.buildClaims(existing.subjectType, existing.subjectId);
     const accessToken = this.issueAccessToken(claims);
     const refreshToken = await this.issueRefreshToken(existing.subjectType, existing.subjectId);
 
@@ -152,10 +182,11 @@ export class TokenService {
     return existing;
   }
 
+  /** Returns null when the subject can no longer hold a session. */
   private async buildClaims(
     subjectType: RefreshTokenSubjectType,
     subjectId: string,
-  ): Promise<AccessTokenClaims> {
+  ): Promise<AccessTokenClaims | null> {
     if (subjectType === 'STAFF') {
       return this.buildStaffClaims(subjectId);
     }
@@ -165,7 +196,13 @@ export class TokenService {
   // Staff permission/location resolution is exercised fully by Task 3
   // (staff login), but is implemented here since TokenService is shared
   // infrastructure and the schema it reads already exists.
-  private async buildStaffClaims(staffUserId: string): Promise<AccessTokenClaims> {
+  //
+  // Returns null — failing the whole rotation — for a staff user who no
+  // longer exists or has been deactivated, rather than minting a token
+  // with `permissions: []` for a nonexistent user or a still-valid token
+  // for a deactivated one. Mirrors the `deactivatedAt` checks on the
+  // staff login/2-step/role-location paths in `AuthService`.
+  private async buildStaffClaims(staffUserId: string): Promise<AccessTokenClaims | null> {
     const staffUser = await this.prisma.staffUser.findUnique({
       where: { id: staffUserId },
       include: {
@@ -173,8 +210,11 @@ export class TokenService {
         staffUserLocations: true,
       },
     });
+    if (!staffUser || staffUser.deactivatedAt) {
+      return null;
+    }
 
-    const permissions = computeStaffPermissions(staffUser?.role);
+    const permissions = computeStaffPermissions(staffUser.role);
 
     return {
       sub: staffUserId,
@@ -186,7 +226,7 @@ export class TokenService {
       // location a staff member most recently chose across a token
       // refresh, so this arbitrarily keeps using whichever row sorts
       // first; that's an accepted limitation, not something this fixes.
-      staffUserLocationId: staffUser?.staffUserLocations[0]?.id,
+      staffUserLocationId: staffUser.staffUserLocations[0]?.id,
     };
   }
 

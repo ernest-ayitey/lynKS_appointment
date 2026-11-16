@@ -33,6 +33,14 @@ describe('Patient OTP auth (e2e)', () => {
     return code === '000000' ? '111111' : '000000';
   }
 
+  async function generateStaffTwoStepOtp(
+    phone: string,
+  ): Promise<{ requestId: string; code: string }> {
+    createdPhones.push(phone);
+    const { requestId, code } = await otpService.generate(phone, OtpPurpose.STAFF_TWO_STEP);
+    return { requestId, code };
+  }
+
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -91,6 +99,28 @@ describe('Patient OTP auth (e2e)', () => {
       .send({ requestId, code: wrongCodeFor(code) });
 
     expect(response.status).toBe(401);
+  });
+
+  it('rejects a valid STAFF_TWO_STEP code at the patient verify-otp endpoint', async () => {
+    // The code and requestId are genuine, unexpired and unconsumed —
+    // they were simply issued for the staff 2-step flow. Redeeming one
+    // here must not mint patient tokens (nor create an Account) for the
+    // phone number it was sent to.
+    const phone = uniquePhone();
+    const { requestId, code } = await generateStaffTwoStepOtp(phone);
+
+    const response = await request(app.getHttpServer())
+      .post('/auth/patient/verify-otp')
+      .send({ requestId, code });
+
+    expect(response.status).toBe(401);
+    expect(await prisma.account.findUnique({ where: { phone } })).toBeNull();
+
+    // The OTP was rejected on purpose alone: it is still unconsumed and
+    // the code was genuinely correct.
+    const otp = await prisma.otpCode.findUnique({ where: { id: requestId } });
+    expect(otp?.consumedAt).toBeNull();
+    expect(await otpService.verify(requestId, code)).toBe(true);
   });
 
   it('rejects verify-otp reusing an already-consumed code', async () => {

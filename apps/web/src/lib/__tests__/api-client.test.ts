@@ -94,6 +94,40 @@ describe('apiClient.post', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it('does not attempt a refresh when an /auth/ call returns 401 (wrong password)', async () => {
+    // A 401 from a sign-in endpoint is an ordinary domain error, not a
+    // stale-access-token signal: it must not fire /auth/refresh, and it
+    // must not clear the tokens of a user who is already signed in.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ message: 'Invalid credentials' }, 401));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      apiClient.post('/auth/staff/login', { email: 'nurse@example.com', password: 'wrong' }),
+    ).rejects.toMatchObject({ status: 401, message: 'Invalid credentials' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).not.toContain('/auth/refresh');
+    expect(authStorage.getAccessToken()).toBe('old-access');
+    expect(authStorage.getRefreshToken()).toBe('old-refresh');
+  });
+
+  it('does not attempt a refresh when an OTP verify call returns 401 (wrong code)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ message: 'Invalid or expired OTP' }, 401));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      apiClient.post('/auth/patient/verify-otp', { requestId: 'req-1', code: '000000' }),
+    ).rejects.toMatchObject({ status: 401 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(authStorage.getRefreshToken()).toBe('old-refresh');
+  });
+
   it('propagates non-401 errors without attempting a refresh', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ message: 'Server error' }, 500));
     vi.stubGlobal('fetch', fetchMock);

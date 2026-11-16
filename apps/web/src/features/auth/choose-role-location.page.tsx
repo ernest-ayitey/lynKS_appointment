@@ -33,7 +33,18 @@ export function ChooseRoleLocationPage() {
 
     try {
       const result = await resolveRoleLocation(sessionToken, selectedId);
-      authStorage.setTokens(result as { accessToken: string; refreshToken: string });
+
+      // Supplying a staffUserLocationId can only yield final tokens (or
+      // throw) per the backend's contract, so this branch is not
+      // reachable today — but the same guard the other two call sites
+      // use keeps a contract change from writing "undefined" into
+      // storage and leaving a broken session behind.
+      if ('options' in result) {
+        setError('Something went wrong. Please try again.');
+        return;
+      }
+
+      authStorage.setTokens(result);
       navigate('/staff/dashboard', { replace: true });
     } catch (err) {
       setError(

@@ -67,6 +67,20 @@ export class AuthService {
     private readonly tokenService: TokenService,
   ) {}
 
+  /**
+   * Logs an OTP code/destination for local development only. Nest's
+   * default `ConsoleLogger` has `debug` enabled, so an unguarded
+   * `logger.debug` would write plaintext codes and phone numbers to
+   * stdout in production too — this keeps that strictly out of
+   * production regardless of log-level configuration.
+   */
+  private logOtpForDevelopment(message: string): void {
+    if (process.env.NODE_ENV === 'production') {
+      return;
+    }
+    this.logger.debug(message);
+  }
+
   async requestOtp(phone: string): Promise<RequestOtpResult> {
     const { requestId, expiresAt, code } = await this.otpService.generate(
       phone,
@@ -76,7 +90,7 @@ export class AuthService {
     // No SMS gateway exists yet (out of scope for this task) — log the
     // code so it can be delivered/observed in development instead of
     // silently dropping it. Never return it in the HTTP response.
-    this.logger.debug(`OTP for ${phone} (requestId=${requestId}): ${code}`);
+    this.logOtpForDevelopment(`OTP for ${phone} (requestId=${requestId}): ${code}`);
 
     const expiresInSeconds = Math.max(
       0,
@@ -87,7 +101,13 @@ export class AuthService {
 
   async verifyOtp(requestId: string, code: string): Promise<VerifyOtpResult | null> {
     const otp = await this.prisma.otpCode.findUnique({ where: { id: requestId } });
-    if (!otp) {
+    // An OTP is only redeemable by the flow it was issued for. Without
+    // the purpose check a pending STAFF_TWO_STEP code (issued to a staff
+    // member's phone) could be redeemed here to mint patient tokens for
+    // an Account created from that phone number, and vice versa — the
+    // code is cross-flow interchangeable as far as `OtpService.verify`
+    // is concerned, since it only matches code against requestId.
+    if (!otp || otp.purpose !== OtpPurpose.PATIENT_LOGIN) {
       return null;
     }
 
@@ -180,7 +200,9 @@ export class AuthService {
     // No SMS gateway exists yet (out of scope for this task) — log the
     // code so it can be observed in development. Never return it in the
     // HTTP response.
-    this.logger.debug(`Staff 2-step OTP for ${staffUser.phone} (requestId=${requestId}): ${code}`);
+    this.logOtpForDevelopment(
+      `Staff 2-step OTP for ${staffUser.phone} (requestId=${requestId}): ${code}`,
+    );
 
     return { requestId };
   }
@@ -198,7 +220,10 @@ export class AuthService {
     const staffUser = await this.prisma.staffUser.findUnique({
       where: { id: payload.staffUserId },
     });
-    if (!staffUser) {
+    // Same check as `staffTwoStepRequest`: a staff user deactivated
+    // after login must not be able to finish verifying an already-issued
+    // session token.
+    if (!staffUser || staffUser.deactivatedAt) {
       throw new UnauthorizedException('Invalid session');
     }
 
@@ -209,9 +234,15 @@ export class AuthService {
     // supplying staff member B's pending OTP requestId + code, without A
     // ever having received B's code. Checked before the code comparison
     // so a mismatched OTP is rejected regardless of whether the code
-    // itself happens to be correct.
+    // itself happens to be correct. The purpose is checked here too, so
+    // a PATIENT_LOGIN code (which may well have been issued to the same
+    // phone number) can't be redeemed to complete staff 2-step.
     const otp = await this.prisma.otpCode.findUnique({ where: { id: requestId } });
-    if (!otp || otp.destination !== staffUser.phone) {
+    if (
+      !otp ||
+      otp.purpose !== OtpPurpose.STAFF_TWO_STEP ||
+      otp.destination !== staffUser.phone
+    ) {
       throw new UnauthorizedException('Invalid or expired code');
     }
 
@@ -259,7 +290,11 @@ export class AuthService {
         staffUserLocations: { include: { location: true } },
       },
     });
-    if (!staffUser) {
+    // Same check as `staffTwoStepRequest`: a session token issued before
+    // deactivation must not be exchangeable for final access/refresh
+    // tokens. Having `StaffUserLocation` rows is not on its own evidence
+    // that the owning staff user is still active.
+    if (!staffUser || staffUser.deactivatedAt) {
       throw new UnauthorizedException('Invalid session');
     }
 

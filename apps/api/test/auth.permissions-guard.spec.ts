@@ -1,7 +1,9 @@
 import { Controller, Get, INestApplication, UseGuards } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
+import bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
+import { PrismaService } from '../src/prisma/prisma.service';
 import { AccessTokenClaims, TokenService } from '../src/auth/token.service';
 import { JwtAuthGuard } from '../src/auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../src/auth/guards/permissions.guard';
@@ -24,6 +26,10 @@ class TestPermissionsController {
 describe('PermissionsGuard (e2e)', () => {
   let app: INestApplication;
   let tokenService: TokenService;
+  let prisma: PrismaService;
+
+  const createdStaffUserIds: string[] = [];
+  const PASSWORD = 'correct-password-123';
 
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
@@ -35,9 +41,11 @@ describe('PermissionsGuard (e2e)', () => {
     await app.init();
 
     tokenService = moduleRef.get(TokenService);
+    prisma = moduleRef.get(PrismaService);
   });
 
   afterAll(async () => {
+    await prisma.staffUser.deleteMany({ where: { id: { in: createdStaffUserIds } } });
     await app.close();
   });
 
@@ -82,5 +90,54 @@ describe('PermissionsGuard (e2e)', () => {
       .set('Authorization', 'Bearer not-a-real-jwt');
 
     expect(response.status).toBe(401);
+  });
+
+  it('returns 401 for a valid, unexpired staff session token presented as a Bearer token', async () => {
+    // A session token is signed by the same JwtService with the same
+    // JWT_SECRET as an access token, so its signature verifies — only
+    // the `typ` claim separates them. It carries no
+    // sub/subjectType/permissions, so letting it through would populate
+    // request.user with a permission-less non-subject.
+    const role = await prisma.role.findFirstOrThrow();
+    const staffUser = await prisma.staffUser.create({
+      data: {
+        name: 'Session Token Test Staff',
+        email: `session-token-test-${Date.now()}@example.com`,
+        phone: `+1555${Date.now()}`.slice(0, 20),
+        passwordHash: await bcrypt.hash(PASSWORD, 10),
+        roleId: role.id,
+        twoStepEnabled: false,
+      },
+    });
+    createdStaffUserIds.push(staffUser.id);
+
+    const loginResponse = await request(app.getHttpServer())
+      .post('/auth/staff/login')
+      .send({ email: staffUser.email, password: PASSWORD });
+    const sessionToken: string = loginResponse.body.sessionToken;
+
+    // The session token really is valid for its own purpose.
+    expect(tokenService.verifySessionToken(sessionToken)).toEqual({
+      staffUserId: staffUser.id,
+      twoStepVerified: true,
+    });
+
+    const response = await request(app.getHttpServer())
+      .get('/test-permissions/clinical-notes')
+      .set('Authorization', `Bearer ${sessionToken}`);
+
+    expect(response.status).toBe(401);
+  });
+
+  it('returns 401 for an access token presented to verifySessionToken', async () => {
+    // The mirror image of the check above: an access token must not pass
+    // as a session token on the staff 2-step / role-location endpoints.
+    const accessToken = tokenService.issueAccessToken({
+      sub: 'staff-access-token',
+      subjectType: 'STAFF',
+      permissions: ['clinical_notes.read'],
+    });
+
+    expect(tokenService.verifySessionToken(accessToken)).toBeNull();
   });
 });
