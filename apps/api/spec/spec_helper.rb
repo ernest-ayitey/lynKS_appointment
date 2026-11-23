@@ -17,4 +17,8 @@ RSpec.configure do |config|
 
   config.include Rack::Test::Methods, type: :request
   config.include RequestSpecHelpers, type: :request
+
+  config.around(:each) do |example|
+    DB.transaction(rollback: :always) { example.run }
+  end
 end
