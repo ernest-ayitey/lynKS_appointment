@@ -6,6 +6,7 @@ require 'json'
 # later tasks (8, 10, 12) add refresh/logout/password-reset routes here.
 class AuthRoutes < Sinatra::Base
   helpers Sinatra::JSON
+  helpers AuthHelpers
 
   MAX_FAILED_LOGIN_ATTEMPTS = 5
   ACCOUNT_DISABLED_MESSAGE = "This account can't sign in right now"
@@ -75,6 +76,16 @@ class AuthRoutes < Sinatra::Base
     set_refresh_cookie(new_raw_refresh_token, remember_me: remember_me)
 
     json(access_token: access_token)
+  end
+
+  post '/auth/logout' do
+    authenticate!
+
+    raw_refresh_token = request.cookies['refresh_token']
+    TokenService.revoke_refresh_token(raw_refresh_token) if raw_refresh_token && !raw_refresh_token.empty?
+
+    response.headers['Set-Cookie'] = 'refresh_token=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax'
+    status 204
   end
 
   # Sets the refresh token as an HttpOnly cookie. Reused by Tasks 8
