@@ -27,4 +27,21 @@ RSpec.describe 'POST /api/v1/auth/password/reset' do
          { 'CONTENT_TYPE' => 'application/json' }
     expect(last_response.status).to eq(422)
   end
+
+  it 'revokes every existing refresh token for the user, not just the current session' do
+    raw_a = TokenService.issue_refresh_token(user, remember_me: false)
+    raw_b = TokenService.issue_refresh_token(user, remember_me: false)
+    token_a = RefreshToken.first(token_hash: RefreshToken.hash_token(raw_a))
+    token_b = RefreshToken.first(token_hash: RefreshToken.hash_token(raw_b))
+    expect(token_a.revoked?).to be false
+    expect(token_b.revoked?).to be false
+
+    post '/api/v1/auth/password/reset', { token: 'tok123', password: 'NewPass1!', password_confirmation: 'NewPass1!' }.to_json,
+         { 'CONTENT_TYPE' => 'application/json' }
+    expect(last_response.status).to eq(200)
+
+    expect(token_a.reload.revoked?).to be true
+    expect(token_b.reload.revoked?).to be true
+    expect(RefreshToken.where(user_id: user.id, revoked_at: nil).count).to eq(1) # only the fresh token issued by this reset
+  end
 end
