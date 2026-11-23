@@ -241,9 +241,27 @@ class AuthRoutes < ApiRoutes
     errors[:password_confirmation] = PASSWORD_MISMATCH_MESSAGE unless password == @payload['password_confirmation']
     halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
 
-    current_user.update(password: password, must_change_password: false)
+    # Changing a password has to end every other session the account has —
+    # that is the whole point of changing it after a suspected compromise.
+    # The caller's own session is re-established below, otherwise its next
+    # refresh would 401 and we'd have traded one bug for another.
+    raw_refresh_token = request.cookies['refresh_token']
+    remember_me = remembered_session?(raw_refresh_token)
 
-    json(message: 'Password changed')
+    DB.transaction(savepoint: true) do
+      current_user.update(password: password, must_change_password: false)
+      RefreshToken.where(user_id: current_user.id, revoked_at: nil).update(revoked_at: Time.now)
+    end
+
+    json(session_payload(current_user, start_session(current_user, remember_me: remember_me)))
+  end
+
+  # Whether the refresh token the caller presented was a "remember me" one,
+  # so re-issuing the caller's session doesn't silently downgrade it.
+  def remembered_session?(raw_token)
+    return false if raw_token.nil? || raw_token.empty?
+
+    RefreshToken.first(token_hash: RefreshToken.hash_token(raw_token))&.remember_me == true
   end
 
   # Issues the access/refresh pair for a newly established session and sets
