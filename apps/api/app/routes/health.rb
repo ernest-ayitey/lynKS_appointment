@@ -1,8 +1,5 @@
-require 'sinatra/base'
-require 'sinatra/json'
+require_relative 'api_base'
 
-class HealthRoutes < Sinatra::Base
-  helpers Sinatra::JSON
-
+class HealthRoutes < ApiRoutes
   get('/health') { json(status: 'ok') }
 end

@@ -1,21 +1,31 @@
-require 'sinatra/base'
-require 'sinatra/json'
+require 'date'
 require 'json'
 require 'securerandom'
+require_relative 'api_base'
 
-# Routes mounted at '/api/v1/auth'. Task 7 starts this file with login;
-# later tasks (8, 10, 12) add refresh/logout/password-reset routes here.
-class AuthRoutes < Sinatra::Base
-  helpers Sinatra::JSON
+# Routes mounted at '/api/v1/auth'. Error responses all go through
+# ApiRoutes#halt_json_error so the whole file shares one envelope; see
+# ApiRoutes for its shape.
+class AuthRoutes < ApiRoutes
   helpers AuthHelpers
 
   MAX_FAILED_LOGIN_ATTEMPTS = 5
   ACCOUNT_DISABLED_MESSAGE = "This account can't sign in right now"
+  INVALID_CREDENTIALS_MESSAGE = 'Incorrect username or password'
+  SESSION_EXPIRED_MESSAGE = 'Session expired, please sign in again'
+  INVALID_RESET_LINK_MESSAGE = 'Invalid or expired reset link'
+  USERNAME_FORMAT_MESSAGE = 'Invalid username format'
+  PASSWORD_POLICY_MESSAGE = 'Password must be at least 8 characters and include a digit and a symbol'
+  PASSWORD_MISMATCH_MESSAGE = "Passwords don't match"
 
   before do
     if request.body
       request.body.rewind
-      @payload = JSON.parse(request.body.read)
+      parsed = JSON.parse(request.body.read)
+      # A JSON body that isn't an object (`[1,2]`, `"x"`, `null`) must not
+      # leave @payload as something that doesn't respond to #[] with a
+      # string key.
+      @payload = parsed.is_a?(Hash) ? parsed : {}
     else
       @payload = {}
     end
@@ -28,13 +38,13 @@ class AuthRoutes < Sinatra::Base
     password = @payload['password']
     remember_me = @payload['remember_me'] == true
 
-    user = username && User.find_by_username_ci(username)
+    user = User.find_by_username_ci(username)
 
     # A locked account always gets the lockout response (423), whether this
     # request is the one that trips the lock or a later attempt against an
     # already-locked account. A deactivated account gets a plain 403.
-    halt 423, json(error: ACCOUNT_DISABLED_MESSAGE) if user&.locked?
-    halt 403, json(error: ACCOUNT_DISABLED_MESSAGE) if user&.deactivated?
+    halt_json_error 423, ACCOUNT_DISABLED_MESSAGE if user&.locked?
+    halt_json_error 403, ACCOUNT_DISABLED_MESSAGE if user&.deactivated?
 
     unless user && user.authenticate(password)
       if user
@@ -47,39 +57,25 @@ class AuthRoutes < Sinatra::Base
             user.update(failed_login_count: new_count, status: 'locked', locked_at: Time.now)
             RefreshToken.where(user_id: user.id, revoked_at: nil).update(revoked_at: Time.now)
           end
-          halt 423, json(error: ACCOUNT_DISABLED_MESSAGE)
+          halt_json_error 423, ACCOUNT_DISABLED_MESSAGE
         else
           user.update(failed_login_count: new_count)
         end
       end
-      halt 401, json(error: 'Incorrect username or password')
+      halt_json_error 401, INVALID_CREDENTIALS_MESSAGE
     end
 
     user.update(failed_login_count: 0)
 
-    access_token = TokenService.issue_access_token(user)
-    raw_refresh_token = TokenService.issue_refresh_token(user, remember_me: remember_me)
-    set_refresh_cookie(raw_refresh_token, remember_me: remember_me)
-
-    json(
-      access_token: access_token,
-      must_change_password: user.must_change_password,
-      user: {
-        id: user.id,
-        username: user.username,
-        role: user.role,
-        first_name: user.first_name,
-        last_name: user.last_name
-      }
-    )
+    json(session_payload(user, start_session(user, remember_me: remember_me)))
   end
 
   post '/auth/refresh' do
     raw_refresh_token = request.cookies['refresh_token']
-    halt 401, json(error: 'Session expired, please sign in again') if raw_refresh_token.nil? || raw_refresh_token.empty?
+    halt_json_error 401, SESSION_EXPIRED_MESSAGE if raw_refresh_token.nil? || raw_refresh_token.empty?
 
     result = TokenService.rotate_refresh_token(raw_refresh_token)
-    halt 401, json(error: 'Session expired, please sign in again') if result.nil?
+    halt_json_error 401, SESSION_EXPIRED_MESSAGE if result.nil?
 
     new_raw_refresh_token, user = result
     access_token = TokenService.issue_access_token(user)
@@ -101,7 +97,9 @@ class AuthRoutes < Sinatra::Base
 
   get '/auth/username-availability' do
     username = params['username']
-    halt 422, json(error: 'Invalid username format') unless username_format_valid?(username)
+    unless username_format_valid?(username)
+      halt_json_error 422, USERNAME_FORMAT_MESSAGE, username: USERNAME_FORMAT_MESSAGE
+    end
 
     json(available: User.find_by_username_ci(username).nil?)
   end
@@ -109,14 +107,25 @@ class AuthRoutes < Sinatra::Base
   post '/auth/register' do
     username = @payload['username']
     password = @payload['password']
+    date_of_birth = @payload['date_of_birth']
+    parsed_date_of_birth = parse_date(date_of_birth)
 
     errors = {}
-    errors[:username] = 'Invalid username format' unless username_format_valid?(username)
-    errors[:username] = 'Username is already taken' if errors[:username].nil? && username && User.find_by_username_ci(username)
-    errors[:password] = 'Password must be at least 8 characters and include a digit and a symbol' unless password_policy_valid?(password)
-    errors[:password_confirmation] = "Passwords don't match" unless password == @payload['password_confirmation']
+    errors[:username] = USERNAME_FORMAT_MESSAGE unless username_format_valid?(username)
+    errors[:username] = 'Username is already taken' if errors[:username].nil? && User.find_by_username_ci(username)
+    errors[:password] = PASSWORD_POLICY_MESSAGE unless password_policy_valid?(password)
+    errors[:password_confirmation] = PASSWORD_MISMATCH_MESSAGE unless password == @payload['password_confirmation']
+    # The users table has these NOT NULL, and Sequel's typecaster rejects
+    # non-string values for a string column, so without these checks
+    # ordinary bad input reaches the database and surfaces as a 500.
+    errors[:email] = 'Email is required' unless present_string?(@payload['email'])
+    errors[:first_name] = 'First name is required' unless present_string?(@payload['first_name'])
+    errors[:last_name] = 'Last name is required' unless present_string?(@payload['last_name'])
+    errors[:phone] = 'Enter a valid phone number' unless optional_string?(@payload['phone'])
+    errors[:gender] = 'Enter a valid gender' unless optional_string?(@payload['gender'])
+    errors[:date_of_birth] = 'Enter a valid date of birth' if !date_of_birth.nil? && parsed_date_of_birth.nil?
     errors[:accept_terms] = 'You must accept the terms' unless @payload['accept_terms'] == true
-    halt 422, json(errors: errors) unless errors.empty?
+    halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
 
     user = User.create(
       role: 'patient',
@@ -128,37 +137,25 @@ class AuthRoutes < Sinatra::Base
       phone: @payload['phone'],
       first_name: @payload['first_name'],
       last_name: @payload['last_name'],
-      date_of_birth: @payload['date_of_birth'],
+      date_of_birth: parsed_date_of_birth,
       gender: @payload['gender']
     )
 
-    access_token = TokenService.issue_access_token(user)
-    raw_refresh_token = TokenService.issue_refresh_token(user, remember_me: false)
-    set_refresh_cookie(raw_refresh_token, remember_me: false)
-
     status 201
-    json(
-      access_token: access_token,
-      must_change_password: user.must_change_password,
-      user: {
-        id: user.id,
-        username: user.username,
-        role: user.role,
-        first_name: user.first_name,
-        last_name: user.last_name
-      }
-    )
+    json(session_payload(user, start_session(user, remember_me: false)))
   end
 
   post '/auth/password/forgot' do
     username = @payload['username']
-    user = username && User.find_by_username_ci(username)
+    user = User.find_by_username_ci(username)
 
     if user
       raw_token = SecureRandom.hex(16)
       PasswordResetToken.create(user: user, token: raw_token, expires_at: Time.now + 1800)
 
-      reset_link = "#{ENV['FRONTEND_URL']}/reset-password?token=#{raw_token}"
+      # Path parameter, not a query string: the frontend route declared in
+      # the design spec is '/reset-password/:token'.
+      reset_link = "#{ENV['FRONTEND_URL']}/reset-password/#{raw_token}"
       Mailer.deliver(
         to: user.email,
         subject: 'Reset your password',
@@ -175,8 +172,8 @@ class AuthRoutes < Sinatra::Base
     raw_token = @payload['token']
     password = @payload['password']
 
-    reset_token = raw_token && PasswordResetToken.first(token: raw_token)
-    halt 422, json(error: 'Invalid or expired reset link') if reset_token.nil? || reset_token.expired? || reset_token.used?
+    reset_token = raw_token.is_a?(String) ? PasswordResetToken.first(token: raw_token) : nil
+    halt_json_error 422, INVALID_RESET_LINK_MESSAGE if reset_token.nil? || reset_token.expired? || reset_token.used?
 
     user = reset_token.user
 
@@ -184,33 +181,19 @@ class AuthRoutes < Sinatra::Base
     # a working session — by resetting its password. A locked one is: the
     # reset link is the self-service way out of a lockout, so the lock state
     # is cleared below once the new password is accepted.
-    halt 403, json(error: ACCOUNT_DISABLED_MESSAGE) if user.deactivated?
+    halt_json_error 403, ACCOUNT_DISABLED_MESSAGE if user.deactivated?
 
     errors = {}
-    errors[:password] = 'Password must be at least 8 characters and include a digit and a symbol' unless password_policy_valid?(password)
-    errors[:password_confirmation] = "Passwords don't match" unless password == @payload['password_confirmation']
-    halt 422, json(errors: errors) unless errors.empty?
+    errors[:password] = PASSWORD_POLICY_MESSAGE unless password_policy_valid?(password)
+    errors[:password_confirmation] = PASSWORD_MISMATCH_MESSAGE unless password == @payload['password_confirmation']
+    halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
 
     unlocked_status = user.locked? ? 'active' : user.status
     user.update(password: password, failed_login_count: 0, locked_at: nil, status: unlocked_status)
     reset_token.update(used_at: Time.now)
     RefreshToken.where(user_id: user.id, revoked_at: nil).update(revoked_at: Time.now)
 
-    access_token = TokenService.issue_access_token(user)
-    raw_refresh_token = TokenService.issue_refresh_token(user, remember_me: false)
-    set_refresh_cookie(raw_refresh_token, remember_me: false)
-
-    json(
-      access_token: access_token,
-      must_change_password: user.must_change_password,
-      user: {
-        id: user.id,
-        username: user.username,
-        role: user.role,
-        first_name: user.first_name,
-        last_name: user.last_name
-      }
-    )
+    json(session_payload(user, start_session(user, remember_me: false)))
   end
 
   before '/auth/password/change' do
@@ -223,13 +206,37 @@ class AuthRoutes < Sinatra::Base
 
     errors = {}
     errors[:current_password] = 'Incorrect current password' unless current_user.authenticate(current_password)
-    errors[:password] = 'Password must be at least 8 characters and include a digit and a symbol' unless password_policy_valid?(password)
-    errors[:password_confirmation] = "Passwords don't match" unless password == @payload['password_confirmation']
-    halt 422, json(errors: errors) unless errors.empty?
+    errors[:password] = PASSWORD_POLICY_MESSAGE unless password_policy_valid?(password)
+    errors[:password_confirmation] = PASSWORD_MISMATCH_MESSAGE unless password == @payload['password_confirmation']
+    halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
 
     current_user.update(password: password, must_change_password: false)
 
     json(message: 'Password changed')
+  end
+
+  # Issues the access/refresh pair for a newly established session and sets
+  # the refresh cookie. Shared by login, register, and password reset.
+  def start_session(user, remember_me:)
+    raw_refresh_token = TokenService.issue_refresh_token(user, remember_me: remember_me)
+    set_refresh_cookie(raw_refresh_token, remember_me: remember_me)
+    TokenService.issue_access_token(user)
+  end
+
+  # The body every route that establishes a session returns, so the client
+  # sees one shape no matter how the session began.
+  def session_payload(user, access_token)
+    {
+      access_token: access_token,
+      must_change_password: user.must_change_password,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        first_name: user.first_name,
+        last_name: user.last_name
+      }
+    }
   end
 
   # Sets the refresh token as an HttpOnly cookie. Reused by Tasks 8
@@ -249,7 +256,9 @@ class AuthRoutes < Sinatra::Base
   # Validates username format: 4-20 characters, alphanumeric plus dots and underscores.
   # Reused by Task 11 (register) and Task 10 (username-availability).
   def username_format_valid?(username)
-    /\A[A-Za-z0-9._]{4,20}\z/.match?(username) if username
+    return false unless username.is_a?(String)
+
+    /\A[A-Za-z0-9._]{4,20}\z/.match?(username)
   end
 
   # Validates password strength: at least 8 characters, with at least one
@@ -259,5 +268,23 @@ class AuthRoutes < Sinatra::Base
     return false unless password.is_a?(String)
 
     password.length >= 8 && password.match?(/\d/) && password.match?(/[^A-Za-z0-9]/)
+  end
+
+  def present_string?(value)
+    value.is_a?(String) && !value.strip.empty?
+  end
+
+  def optional_string?(value)
+    value.nil? || value.is_a?(String)
+  end
+
+  # Returns the parsed Date, or nil for anything that isn't an ISO-8601 date,
+  # so a malformed value becomes a 422 rather than a typecaster blow-up.
+  def parse_date(value)
+    return nil unless value.is_a?(String)
+
+    Date.iso8601(value)
+  rescue ArgumentError
+    nil
   end
 end

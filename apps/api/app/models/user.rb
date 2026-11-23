@@ -33,7 +33,12 @@ class User < Sequel::Model(:users)
     status == 'deactivated'
   end
 
+  # Returns nil for anything that isn't a string, so a request body like
+  # `{"username": 123}` is an ordinary "no such user" rather than a 500 on
+  # NoMethodError.
   def self.find_by_username_ci(username)
+    return nil unless username.is_a?(String)
+
     where(Sequel.function(:lower, :username) => username.downcase).first
   end
 end
