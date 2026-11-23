@@ -151,7 +151,20 @@ Expected: `Gemfile.lock` created, no errors.
 
 Loads `.env` via `Dotenv.load`, requires `sequel`, connects:
 `DB = Sequel.connect(ENV.fetch('DATABASE_URL'))`. Also requires
-`sequel/extensions/migration` so Task migrations can run via Rake.
+`sequel/extensions/migration` so Task migrations can run via Rake. After
+`DB` is set, auto-require every file under `app/models/`, `app/services/`,
+and `app/support/` (sorted, each directory in that order) via `Dir.glob`:
+
+```ruby
+%w[models services support].each do |dir|
+  Dir[File.join(__dir__, '..', 'app', dir, '*.rb')].sort.each { |f| require f }
+end
+```
+
+This means **no later task ever needs to touch `config/environment.rb`
+again** — Tasks 2–6 and 9 just drop their new file in the right directory
+and it's picked up automatically. (Found during pre-flight: the original
+draft had later tasks silently editing this file without declaring it.)
 
 - [ ] **Step 4: Write `.env.example` and a local `.env`**
 
@@ -298,7 +311,8 @@ Expected: FAIL — `User` not defined / `password=` not defined.
 `authenticate(raw)` does `BCrypt::Password.new(password_digest) == raw`.
 `find_by_username_ci(username)` does
 `where(Sequel.function(:lower, :username) => username.downcase).first`.
-Require this file from `config/environment.rb` (after `DB` is set).
+No manual require needed — `config/environment.rb`'s auto-require (Task 1)
+picks this file up.
 
 - [ ] **Step 6: Run tests to verify they pass**
 
@@ -339,12 +353,17 @@ Sequel.migration do
       String :token_hash, null: false
       index :token_hash, unique: true
       DateTime :expires_at, null: false
+      TrueClass :remember_me, null: false, default: false
       DateTime :revoked_at
       DateTime :created_at, null: false
     end
   end
 end
 ```
+
+`remember_me` records which TTL window (Task 5) this token was issued
+under, so rotation can carry it forward without re-deriving it from the
+expiry timestamp.
 
 - [ ] **Step 2: Run migrations on both databases**
 
@@ -528,15 +547,14 @@ Time.now.to_i + ENV['JWT_ACCESS_TTL_SECONDS'].to_i}, ENV['JWT_SECRET'],
 algorithm: 'HS256')`, rescue `JWT::DecodeError` and return `nil`.
 Refresh tokens: generate raw with `SecureRandom.hex(32)`; store
 `RefreshToken.create(user: user, token_hash: RefreshToken.hash_token(raw),
-expires_at: Time.now + (remember_me ? ENV['REFRESH_TOKEN_TTL_DAYS_REMEMBER']
-: ENV['REFRESH_TOKEN_TTL_DAYS']).to_i.days)`. `rotate_refresh_token(raw)`
-looks up by `token_hash: hash_token(raw)`, returns `nil` if missing/
-expired?/revoked?, else marks it `revoked_at: Time.now` and issues+returns
-a fresh pair via `issue_refresh_token` (same `remember_me` window as the
-token being rotated — store the original `expires_at - created_at` window
-on the row, or simplest: re-derive `remember_me` from whether the token's
-original lifetime was closer to the long or short TTL; pick whichever is
-simplest to implement and keep it consistent).
+remember_me: remember_me, expires_at: Time.now + (remember_me ?
+ENV['REFRESH_TOKEN_TTL_DAYS_REMEMBER'] : ENV['REFRESH_TOKEN_TTL_DAYS'])
+.to_i.days)`. `rotate_refresh_token(raw)` looks up by `token_hash:
+hash_token(raw)`, returns `nil` if missing/expired?/revoked?, else marks it
+`revoked_at: Time.now` and issues+returns a fresh pair via
+`issue_refresh_token(user, remember_me: old_token.remember_me)` — the
+stored column, not re-derived — so the "keep me signed in" window survives
+rotation exactly.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -656,6 +674,16 @@ RSpec.describe 'POST /api/v1/auth/login' do
       { 'CONTENT_TYPE' => 'application/json' }
     expect(last_response.status).to eq(403)
   end
+
+  it 'sets a long-lived cookie only when remember_me is true' do
+    post '/api/v1/auth/login', { username: 'ernesta', password: 'Sup3r!word', remember_me: true }.to_json,
+      { 'CONTENT_TYPE' => 'application/json' }
+    expect(last_response.headers['Set-Cookie']).to match(/refresh_token=.*Max-Age/)
+
+    post '/api/v1/auth/login', { username: 'ernesta', password: 'Sup3r!word', remember_me: false }.to_json,
+      { 'CONTENT_TYPE' => 'application/json' }
+    expect(last_response.headers['Set-Cookie']).not_to match(/Max-Age/)
+  end
 end
 ```
 
@@ -670,12 +698,15 @@ Flow: parse JSON body (`username`, `password`, `remember_me` default
 false); find user case-insensitively; if `status == 'locked'` or
 `'deactivated'` → 403 `{error: "This account can't sign in right now"}`;
 if missing or `!user.authenticate(password)` → increment
-`failed_login_count`, if it reaches 5 set `status: 'locked', locked_at:
-Time.now`, respond 401 (or 423 if this failure is the one that just
-locked it) `{error: "Incorrect username or password"}`; on success reset
+`failed_login_count`; if that increment reaches 5, set `status: 'locked',
+locked_at: Time.now` **and respond 423** (not 401) for this same request —
+the request that trips the lockout gets the locked response, same as any
+later attempt against an already-locked account; below 5, respond 401
+`{error: "Incorrect username or password"}`. On success reset
 `failed_login_count: 0`, issue access token (body) + refresh token (via
-`set_refresh_cookie`), respond 200 with `{access_token:, must_change_
-password:, user: {id, username, role, first_name, last_name}}`.
+`set_refresh_cookie(raw, remember_me: remember_me)`), respond 200 with
+`{access_token:, must_change_password:, user: {id, username, role,
+first_name, last_name}}`.
 
 - [ ] **Step 4: Mount `AuthRoutes` in `app/api.rb`**
 
