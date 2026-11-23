@@ -8,20 +8,23 @@ class TokenService
     payload = {
       sub: user.id,
       role: user.role,
-      exp: Time.now.to_i + ENV['JWT_ACCESS_TTL_SECONDS'].to_i
+      exp: Time.now.to_i + Integer(ENV.fetch('JWT_ACCESS_TTL_SECONDS'))
     }
-    JWT.encode(payload, ENV['JWT_SECRET'], ALGORITHM)
+    JWT.encode(payload, ENV.fetch('JWT_SECRET'), ALGORITHM)
   end
 
   def self.decode_access_token(jwt)
-    JWT.decode(jwt, ENV['JWT_SECRET'], true, algorithm: ALGORITHM).first
+    JWT.decode(jwt, ENV.fetch('JWT_SECRET'), true, algorithm: ALGORITHM).first
   rescue JWT::DecodeError
     nil
   end
 
   def self.issue_refresh_token(user, remember_me:)
     raw = SecureRandom.hex(32)
-    ttl_days = remember_me ? ENV['REFRESH_TOKEN_TTL_DAYS_REMEMBER'].to_i : ENV['REFRESH_TOKEN_TTL_DAYS'].to_i
+    # fetch, not ENV[...].to_i: EnvValidation has already proved these are
+    # positive integers at boot, and a drifted config should raise rather
+    # than quietly become a zero-length TTL.
+    ttl_days = Integer(ENV.fetch(remember_me ? 'REFRESH_TOKEN_TTL_DAYS_REMEMBER' : 'REFRESH_TOKEN_TTL_DAYS'))
 
     RefreshToken.create(
       user: user,

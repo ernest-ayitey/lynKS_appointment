@@ -293,7 +293,7 @@ class AuthRoutes < ApiRoutes
   def set_refresh_cookie(raw_token, remember_me:)
     attributes = ["refresh_token=#{raw_token}", 'Path=/']
     if remember_me
-      max_age = ENV['REFRESH_TOKEN_TTL_DAYS_REMEMBER'].to_i * 86_400
+      max_age = Integer(ENV.fetch('REFRESH_TOKEN_TTL_DAYS_REMEMBER')) * 86_400
       attributes << "Max-Age=#{max_age}"
     end
     attributes << 'HttpOnly'
