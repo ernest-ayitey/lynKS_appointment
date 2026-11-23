@@ -5,7 +5,10 @@ RSpec.describe 'POST /api/v1/auth/password/reset' do
     User.create(role: 'patient', username: 'ernesta', email: 'e@x.com',
                 first_name: 'A', last_name: 'B', password: 'Sup3r!word')
   end
-  let!(:token) { PasswordResetToken.create(user: user, token: 'tok123', expires_at: Time.now + 1800) }
+  let!(:token) do
+    PasswordResetToken.create(user: user, token_digest: PasswordResetToken.hash_token('tok123'),
+                              expires_at: Time.now + 1800)
+  end
 
   it 'resets the password and logs in' do
     post '/api/v1/auth/password/reset', { token: 'tok123', password: 'NewPass1!', password_confirmation: 'NewPass1!' }.to_json,
@@ -82,5 +85,54 @@ RSpec.describe 'POST /api/v1/auth/password/reset' do
          { 'CONTENT_TYPE' => 'application/json' }
     expect(last_response.status).to eq(200)
     expect(user.reload.status).to eq('invited')
+  end
+
+  it 'rejects a token that only matches the stored digest, not the stored value' do
+    post '/api/v1/auth/password/reset',
+         { token: token.token_digest, password: 'NewPass1!', password_confirmation: 'NewPass1!' }.to_json,
+         { 'CONTENT_TYPE' => 'application/json' }
+    expect(last_response.status).to eq(422)
+    expect(user.reload.authenticate('Sup3r!word')).to be true
+  end
+
+  it 'claims the token atomically, so a request racing on a stale read cannot reuse it' do
+    # Stands in for the TOCTOU window: this request read the row while it was
+    # still unused, and a concurrent request consumed it before this one got
+    # to its own write. The conditional UPDATE has to affect zero rows.
+    stale_read = PasswordResetToken.first(id: token.id)
+    allow(PasswordResetToken).to receive(:first).and_return(stale_read)
+    token.update(used_at: Time.now)
+    expect(stale_read.used?).to be false
+
+    post '/api/v1/auth/password/reset', { token: 'tok123', password: 'NewPass1!', password_confirmation: 'NewPass1!' }.to_json,
+         { 'CONTENT_TYPE' => 'application/json' }
+
+    expect(last_response.status).to eq(422)
+    expect(JSON.parse(last_response.body)).to eq('error' => 'Invalid or expired reset link')
+    expect(user.reload.authenticate('Sup3r!word')).to be true
+  end
+
+  it 'rejects a second use of the same link' do
+    body = { token: 'tok123', password: 'NewPass1!', password_confirmation: 'NewPass1!' }.to_json
+    post '/api/v1/auth/password/reset', body, { 'CONTENT_TYPE' => 'application/json' }
+    expect(last_response.status).to eq(200)
+
+    post '/api/v1/auth/password/reset',
+         { token: 'tok123', password: 'Other2@pass', password_confirmation: 'Other2@pass' }.to_json,
+         { 'CONTENT_TYPE' => 'application/json' }
+    expect(last_response.status).to eq(422)
+    expect(user.reload.authenticate('NewPass1!')).to be true
+  end
+
+  it 'leaves nothing half-done when a write fails part-way through' do
+    allow(RefreshToken).to receive(:where).and_raise(StandardError, 'boom')
+
+    expect do
+      post '/api/v1/auth/password/reset', { token: 'tok123', password: 'NewPass1!', password_confirmation: 'NewPass1!' }.to_json,
+           { 'CONTENT_TYPE' => 'application/json' }
+    end.to raise_error(StandardError, 'boom')
+
+    expect(user.reload.authenticate('Sup3r!word')).to be true
+    expect(token.reload.used?).to be false
   end
 end

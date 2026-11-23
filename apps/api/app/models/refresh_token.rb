@@ -1,13 +1,11 @@
-require 'digest'
+require_relative '../support/token_hashing'
 
 class RefreshToken < Sequel::Model(:refresh_tokens)
   plugin :timestamps
 
-  many_to_one :user
+  extend TokenHashing
 
-  def self.hash_token(raw)
-    Digest::SHA256.hexdigest(raw)
-  end
+  many_to_one :user
 
   def expired?
     expires_at < Time.now

@@ -38,6 +38,13 @@ class ApiRoutes < Sinatra::Base
   # and then by the response status, so a bare `error do ... end` would never
   # be reached for a plain StandardError.
   error 500 do
+    boom = env['sinatra.error']
+    # Registering any error handler bypasses Sinatra's own
+    # `raise boom if raise_errors?`, so honour that setting here instead:
+    # in the test environment an unexpected exception has to surface with
+    # its backtrace rather than being flattened into an opaque 500 body.
+    raise boom if boom && settings.raise_errors?
+
     json(error: 'Something went wrong')
   end
 end

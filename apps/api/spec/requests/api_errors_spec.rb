@@ -17,9 +17,9 @@ RSpec.describe 'JSON error handling under /api/v1' do
   end
 
   describe 'an unhandled exception' do
-    # Sinatra re-raises instead of running error handlers in the test
-    # environment, so the handler production relies on would never be
-    # exercised. Turn that off for this example only.
+    # The handler deliberately re-raises while raise_errors is on, so real
+    # test failures aren't flattened into an opaque 500. Turn it off for this
+    # example only, to exercise the behaviour production actually gets.
     around do |example|
       original = AuthRoutes.settings.raise_errors?
       AuthRoutes.set(:raise_errors, false)

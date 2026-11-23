@@ -53,7 +53,9 @@ class AuthRoutes < ApiRoutes
           # Locking the account has to cut off the sessions it already has,
           # otherwise a brute-force that trips the lock leaves any session
           # opened earlier (or stolen) able to keep refreshing indefinitely.
-          DB.transaction do
+          # savepoint: true so the pair stays atomic even if an outer
+          # transaction is already open.
+          DB.transaction(savepoint: true) do
             user.update(failed_login_count: new_count, status: 'locked', locked_at: Time.now)
             RefreshToken.where(user_id: user.id, revoked_at: nil).update(revoked_at: Time.now)
           end
@@ -150,8 +152,14 @@ class AuthRoutes < ApiRoutes
     user = User.find_by_username_ci(username)
 
     if user
+      # Only the digest is persisted; the raw token leaves the server solely
+      # inside the link below.
       raw_token = SecureRandom.hex(16)
-      PasswordResetToken.create(user: user, token: raw_token, expires_at: Time.now + 1800)
+      PasswordResetToken.create(
+        user: user,
+        token_digest: PasswordResetToken.hash_token(raw_token),
+        expires_at: Time.now + 1800
+      )
 
       # Path parameter, not a query string: the frontend route declared in
       # the design spec is '/reset-password/:token'.
@@ -172,7 +180,8 @@ class AuthRoutes < ApiRoutes
     raw_token = @payload['token']
     password = @payload['password']
 
-    reset_token = raw_token.is_a?(String) ? PasswordResetToken.first(token: raw_token) : nil
+    digest = raw_token.is_a?(String) ? PasswordResetToken.hash_token(raw_token) : nil
+    reset_token = digest && PasswordResetToken.first(token_digest: digest)
     halt_json_error 422, INVALID_RESET_LINK_MESSAGE if reset_token.nil? || reset_token.expired? || reset_token.used?
 
     user = reset_token.user
@@ -189,9 +198,31 @@ class AuthRoutes < ApiRoutes
     halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
 
     unlocked_status = user.locked? ? 'active' : user.status
-    user.update(password: password, failed_login_count: 0, locked_at: nil, status: unlocked_status)
-    reset_token.update(used_at: Time.now)
-    RefreshToken.where(user_id: user.id, revoked_at: nil).update(revoked_at: Time.now)
+
+    # The read above is only a fast path for the obvious rejections. The
+    # claim itself has to be one conditional UPDATE keyed on the token still
+    # being unused and unexpired, or two concurrent requests carrying the
+    # same token could both pass the used?/expired? check above and both go
+    # on to reset the password. Same pattern as
+    # TokenService.rotate_refresh_token.
+    #
+    # The claim, the password write, and the session revocation share one
+    # transaction so a failure part-way through can't burn the token without
+    # changing the password (or vice versa). savepoint: true so the block
+    # stays atomic even when it runs inside an outer transaction.
+    claimed = 0
+    DB.transaction(savepoint: true) do
+      claimed = PasswordResetToken
+                .where(token_digest: digest, used_at: nil)
+                .where { expires_at > Time.now }
+                .update(used_at: Time.now)
+      # Nothing has been written yet, so leaving the block is enough.
+      next unless claimed == 1
+
+      user.update(password: password, failed_login_count: 0, locked_at: nil, status: unlocked_status)
+      RefreshToken.where(user_id: user.id, revoked_at: nil).update(revoked_at: Time.now)
+    end
+    halt_json_error 422, INVALID_RESET_LINK_MESSAGE unless claimed == 1
 
     json(session_payload(user, start_session(user, remember_me: false)))
   end
