@@ -3,13 +3,14 @@ require 'rack/cors'
 require 'rack/urlmap'
 require 'rack/cascade'
 require_relative 'routes/health'
+require_relative 'routes/auth'
 
 # Each mounted route class defines its own routes relative to '/api/v1'
 # (e.g. HealthRoutes#'/health' handles 'GET /api/v1/health'). Add new route
-# classes here as they're created (e.g. Task 7's AuthRoutes) — no other
-# change is needed to mount them.
+# classes here as they're created — no other change is needed to mount them.
 MOUNTED_ROUTES = [
-  HealthRoutes
+  HealthRoutes,
+  AuthRoutes
 ].freeze
 
 class App < Sinatra::Base
