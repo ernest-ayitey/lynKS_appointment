@@ -1,7 +1,16 @@
 require 'sinatra/base'
 require 'rack/cors'
 require 'rack/urlmap'
+require 'rack/cascade'
 require_relative 'routes/health'
+
+# Each mounted route class defines its own routes relative to '/api/v1'
+# (e.g. HealthRoutes#'/health' handles 'GET /api/v1/health'). Add new route
+# classes here as they're created (e.g. Task 7's AuthRoutes) — no other
+# change is needed to mount them.
+MOUNTED_ROUTES = [
+  HealthRoutes
+].freeze
 
 class App < Sinatra::Base
   use Rack::Cors do
@@ -11,9 +20,13 @@ class App < Sinatra::Base
     end
   end
 
-  ROUTES = Rack::URLMap.new('/api/v1' => HealthRoutes)
+  # Built once at load time, not per request. Sinatra's own dispatch (routes,
+  # filters, settings, error handlers defined directly on App) still runs
+  # first; only requests that match none of App's own routes fall through
+  # here, so App keeps full access to native Sinatra features.
+  API = Rack::URLMap.new('/api/v1' => Rack::Cascade.new(MOUNTED_ROUTES))
 
-  def call(env)
-    ROUTES.call(env)
+  not_found do
+    halt API.call(request.env)
   end
 end
