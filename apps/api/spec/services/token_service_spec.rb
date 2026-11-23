@@ -26,4 +26,11 @@ RSpec.describe TokenService do
     TokenService.revoke_refresh_token(raw)
     expect(TokenService.rotate_refresh_token(raw)).to be_nil
   end
+
+  it 'preserves remember_me across rotation' do
+    raw = TokenService.issue_refresh_token(user, remember_me: true)
+    new_raw, = TokenService.rotate_refresh_token(raw)
+    new_token = RefreshToken.first(token_hash: RefreshToken.hash_token(new_raw))
+    expect(new_token.remember_me).to be true
+  end
 end

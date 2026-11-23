@@ -34,10 +34,20 @@ class TokenService
   end
 
   def self.rotate_refresh_token(raw)
-    token = RefreshToken.first(token_hash: RefreshToken.hash_token(raw))
-    return nil if token.nil? || token.expired? || token.revoked?
+    hash = RefreshToken.hash_token(raw)
 
-    token.update(revoked_at: Time.now)
+    # Atomically claim the token: only a row that is currently unrevoked and
+    # unexpired gets revoked_at set, and only by whichever caller's UPDATE
+    # reaches MySQL first. If two callers race on the same raw token, at
+    # most one UPDATE affects a row, so a token can only ever be redeemed
+    # once, even under concurrent rotation attempts.
+    claimed = RefreshToken
+              .where(token_hash: hash, revoked_at: nil)
+              .where { expires_at > Time.now }
+              .update(revoked_at: Time.now)
+    return nil unless claimed == 1
+
+    token = RefreshToken.first(token_hash: hash)
     new_raw = issue_refresh_token(token.user, remember_me: token.remember_me)
     [new_raw, token.user]
   end
