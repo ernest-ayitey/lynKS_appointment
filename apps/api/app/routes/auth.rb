@@ -62,6 +62,21 @@ class AuthRoutes < Sinatra::Base
     )
   end
 
+  post '/auth/refresh' do
+    raw_refresh_token = request.cookies['refresh_token']
+    halt 401, json(error: 'Session expired, please sign in again') if raw_refresh_token.nil? || raw_refresh_token.empty?
+
+    result = TokenService.rotate_refresh_token(raw_refresh_token)
+    halt 401, json(error: 'Session expired, please sign in again') if result.nil?
+
+    new_raw_refresh_token, user = result
+    access_token = TokenService.issue_access_token(user)
+    remember_me = RefreshToken.first(token_hash: RefreshToken.hash_token(new_raw_refresh_token)).remember_me
+    set_refresh_cookie(new_raw_refresh_token, remember_me: remember_me)
+
+    json(access_token: access_token)
+  end
+
   # Sets the refresh token as an HttpOnly cookie. Reused by Tasks 8
   # (refresh), 10, and 12 wherever a refresh token needs to be (re)issued.
   def set_refresh_cookie(raw_token, remember_me:)
