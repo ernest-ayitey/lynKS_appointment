@@ -199,6 +199,25 @@ class AuthRoutes < Sinatra::Base
     )
   end
 
+  before '/auth/password/change' do
+    authenticate!
+  end
+
+  post '/auth/password/change' do
+    current_password = @payload['current_password']
+    password = @payload['password']
+
+    errors = {}
+    errors[:current_password] = 'Incorrect current password' unless current_user.authenticate(current_password)
+    errors[:password] = 'Password must be at least 8 characters and include a digit and a symbol' unless password_policy_valid?(password)
+    errors[:password_confirmation] = "Passwords don't match" unless password == @payload['password_confirmation']
+    halt 422, json(errors: errors) unless errors.empty?
+
+    current_user.update(password: password, must_change_password: false)
+
+    json(message: 'Password changed')
+  end
+
   # Sets the refresh token as an HttpOnly cookie. Reused by Tasks 8
   # (refresh), 10, and 12 wherever a refresh token needs to be (re)issued.
   def set_refresh_cookie(raw_token, remember_me:)
