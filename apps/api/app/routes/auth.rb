@@ -8,6 +8,7 @@ class AuthRoutes < Sinatra::Base
   helpers Sinatra::JSON
 
   MAX_FAILED_LOGIN_ATTEMPTS = 5
+  ACCOUNT_DISABLED_MESSAGE = "This account can't sign in right now"
 
   before do
     request.body.rewind
@@ -26,15 +27,15 @@ class AuthRoutes < Sinatra::Base
     # A locked account always gets the lockout response (423), whether this
     # request is the one that trips the lock or a later attempt against an
     # already-locked account. A deactivated account gets a plain 403.
-    halt 423, json(error: "This account can't sign in right now") if user&.status == 'locked'
-    halt 403, json(error: "This account can't sign in right now") if user&.status == 'deactivated'
+    halt 423, json(error: ACCOUNT_DISABLED_MESSAGE) if user&.status == 'locked'
+    halt 403, json(error: ACCOUNT_DISABLED_MESSAGE) if user&.status == 'deactivated'
 
     unless user && user.authenticate(password)
       if user
         new_count = user.failed_login_count + 1
         if new_count >= MAX_FAILED_LOGIN_ATTEMPTS
           user.update(failed_login_count: new_count, status: 'locked', locked_at: Time.now)
-          halt 423, json(error: "This account can't sign in right now")
+          halt 423, json(error: ACCOUNT_DISABLED_MESSAGE)
         else
           user.update(failed_login_count: new_count)
         end
