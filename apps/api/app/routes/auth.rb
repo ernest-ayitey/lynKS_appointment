@@ -1,6 +1,7 @@
 require 'sinatra/base'
 require 'sinatra/json'
 require 'json'
+require 'securerandom'
 
 # Routes mounted at '/api/v1/auth'. Task 7 starts this file with login;
 # later tasks (8, 10, 12) add refresh/logout/password-reset routes here.
@@ -130,6 +131,61 @@ class AuthRoutes < Sinatra::Base
     set_refresh_cookie(raw_refresh_token, remember_me: false)
 
     status 201
+    json(
+      access_token: access_token,
+      must_change_password: user.must_change_password,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        first_name: user.first_name,
+        last_name: user.last_name
+      }
+    )
+  end
+
+  post '/auth/password/forgot' do
+    username = @payload['username']
+    user = username && User.find_by_username_ci(username)
+
+    if user
+      raw_token = SecureRandom.hex(16)
+      PasswordResetToken.create(user: user, token: raw_token, expires_at: Time.now + 1800)
+
+      reset_link = "#{ENV['FRONTEND_URL']}/reset-password?token=#{raw_token}"
+      Mailer.deliver(
+        to: user.email,
+        subject: 'Reset your password',
+        body: "Use the link below to reset your password:\n\n#{reset_link}"
+      )
+    end
+
+    # Same response whether or not the username exists, so the client can't
+    # use this endpoint to probe which usernames are registered.
+    json(message: 'If that username exists, a reset link has been sent')
+  end
+
+  post '/auth/password/reset' do
+    raw_token = @payload['token']
+    password = @payload['password']
+
+    reset_token = raw_token && PasswordResetToken.first(token: raw_token)
+    halt 422, json(error: 'Invalid or expired reset link') if reset_token.nil? || reset_token.expired? || reset_token.used?
+
+    errors = {}
+    errors[:password] = 'Password must be at least 8 characters and include a digit and a symbol' unless password_policy_valid?(password)
+    errors[:password_confirmation] = "Passwords don't match" unless password == @payload['password_confirmation']
+    halt 422, json(errors: errors) unless errors.empty?
+
+    user = reset_token.user
+    user.update(password: password)
+    reset_token.update(used_at: Time.now)
+    RefreshToken.where(user_id: user.id, revoked_at: nil).update(revoked_at: Time.now)
+
+    access_token = TokenService.issue_access_token(user)
+    raw_refresh_token = TokenService.issue_refresh_token(user, remember_me: false)
+    set_refresh_cookie(raw_refresh_token, remember_me: false)
+
     json(
       access_token: access_token,
       must_change_password: user.must_change_password,
