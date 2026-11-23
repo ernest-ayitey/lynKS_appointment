@@ -33,4 +33,17 @@ RSpec.describe 'POST /api/v1/auth/register' do
       { 'CONTENT_TYPE' => 'application/json' }
     expect(last_response.status).to eq(422)
   end
+
+  it 'ignores a role/status/must_change_password override attempt' do
+    post '/api/v1/auth/register',
+      valid_params.merge(role: 'admin', status: 'active', must_change_password: false).to_json,
+      { 'CONTENT_TYPE' => 'application/json' }
+    expect(last_response.status).to eq(201)
+
+    body = JSON.parse(last_response.body)
+    expect(body['user']['role']).to eq('patient')
+
+    persisted = User.find_by_username_ci('ernesta')
+    expect(persisted.role).to eq('patient')
+  end
 end
