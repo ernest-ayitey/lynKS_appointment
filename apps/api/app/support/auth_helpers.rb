@@ -10,6 +10,14 @@ module AuthHelpers
     halt 401, json(error: 'Unauthorized') if claims.nil?
 
     @current_user_id = claims['sub']
+
+    # Access tokens are self-contained and short-lived, so an account that is
+    # locked or deactivated mid-session would otherwise keep working until
+    # its current access token expired. This is the chokepoint every
+    # authenticated route goes through, so the status check belongs here.
+    halt 401, json(error: 'Unauthorized') if current_user.nil? || current_user.signin_blocked?
+
+    @current_user_id
   end
 
   def current_user

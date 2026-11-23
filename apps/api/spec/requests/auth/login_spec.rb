@@ -50,4 +50,31 @@ RSpec.describe 'POST /api/v1/auth/login' do
          { 'CONTENT_TYPE' => 'application/json' }
     expect(last_response.headers['Set-Cookie']).not_to match(/Max-Age/)
   end
+
+  it 'revokes the outstanding refresh tokens when the lockout trips' do
+    raw_a = TokenService.issue_refresh_token(user, remember_me: false)
+    raw_b = TokenService.issue_refresh_token(user, remember_me: true)
+    token_a = RefreshToken.first(token_hash: RefreshToken.hash_token(raw_a))
+    token_b = RefreshToken.first(token_hash: RefreshToken.hash_token(raw_b))
+    expect(token_a.revoked?).to be false
+    expect(token_b.revoked?).to be false
+
+    5.times do
+      post '/api/v1/auth/login', { username: 'ernesta', password: 'nope' }.to_json,
+           { 'CONTENT_TYPE' => 'application/json' }
+    end
+    expect(last_response.status).to eq(423)
+
+    expect(token_a.reload.revoked?).to be true
+    expect(token_b.reload.revoked?).to be true
+    expect(RefreshToken.where(user_id: user.id, revoked_at: nil).count).to eq(0)
+  end
+
+  it 'lets an invited account sign in with its temp password' do
+    user.update(status: 'invited', must_change_password: true)
+    post '/api/v1/auth/login', { username: 'ernesta', password: 'Sup3r!word' }.to_json,
+         { 'CONTENT_TYPE' => 'application/json' }
+    expect(last_response.status).to eq(200)
+    expect(JSON.parse(last_response.body)['must_change_password']).to be true
+  end
 end

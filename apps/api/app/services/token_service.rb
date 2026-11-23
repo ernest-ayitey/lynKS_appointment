@@ -48,8 +48,17 @@ class TokenService
     return nil unless claimed == 1
 
     token = RefreshToken.first(token_hash: hash)
-    new_raw = issue_refresh_token(token.user, remember_me: token.remember_me)
-    [new_raw, token.user]
+    user = token&.user
+
+    # A locked or deactivated account must not be able to extend its session
+    # off a refresh token that was issued before the block. Failing the same
+    # way as any other invalid token keeps the caller's handling uniform. The
+    # claim above already revoked the row, which is correct: the token is
+    # dead and the account has to go through login (or a reset) to recover.
+    return nil if user.nil? || user.signin_blocked?
+
+    new_raw = issue_refresh_token(user, remember_me: token.remember_me)
+    [new_raw, user]
   end
 
   def self.revoke_refresh_token(raw)

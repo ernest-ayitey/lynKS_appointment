@@ -44,4 +44,43 @@ RSpec.describe 'POST /api/v1/auth/password/reset' do
     expect(token_b.reload.revoked?).to be true
     expect(RefreshToken.where(user_id: user.id, revoked_at: nil).count).to eq(1) # only the fresh token issued by this reset
   end
+
+  it 'clears the lock so a locked account can sign in again afterward' do
+    user.update(status: 'locked', locked_at: Time.now, failed_login_count: 5)
+
+    post '/api/v1/auth/password/reset', { token: 'tok123', password: 'NewPass1!', password_confirmation: 'NewPass1!' }.to_json,
+         { 'CONTENT_TYPE' => 'application/json' }
+    expect(last_response.status).to eq(200)
+
+    expect(user.reload.status).to eq('active')
+    expect(user.locked_at).to be_nil
+    expect(user.failed_login_count).to eq(0)
+
+    post '/api/v1/auth/login', { username: 'ernesta', password: 'NewPass1!' }.to_json,
+         { 'CONTENT_TYPE' => 'application/json' }
+    expect(last_response.status).to eq(200)
+  end
+
+  it 'rejects the reset for a deactivated account and hands out no session' do
+    user.update(status: 'deactivated', deactivated_at: Time.now)
+
+    post '/api/v1/auth/password/reset', { token: 'tok123', password: 'NewPass1!', password_confirmation: 'NewPass1!' }.to_json,
+         { 'CONTENT_TYPE' => 'application/json' }
+    expect(last_response.status).to eq(403)
+    expect(last_response.headers['Set-Cookie']).to be_nil
+    expect(JSON.parse(last_response.body)).not_to have_key('access_token')
+
+    expect(user.reload.status).to eq('deactivated')
+    expect(user.authenticate('Sup3r!word')).to be true
+    expect(token.reload.used?).to be false
+  end
+
+  it 'leaves an invited account on its invited status' do
+    user.update(status: 'invited')
+
+    post '/api/v1/auth/password/reset', { token: 'tok123', password: 'NewPass1!', password_confirmation: 'NewPass1!' }.to_json,
+         { 'CONTENT_TYPE' => 'application/json' }
+    expect(last_response.status).to eq(200)
+    expect(user.reload.status).to eq('invited')
+  end
 end

@@ -33,14 +33,20 @@ class AuthRoutes < Sinatra::Base
     # A locked account always gets the lockout response (423), whether this
     # request is the one that trips the lock or a later attempt against an
     # already-locked account. A deactivated account gets a plain 403.
-    halt 423, json(error: ACCOUNT_DISABLED_MESSAGE) if user&.status == 'locked'
-    halt 403, json(error: ACCOUNT_DISABLED_MESSAGE) if user&.status == 'deactivated'
+    halt 423, json(error: ACCOUNT_DISABLED_MESSAGE) if user&.locked?
+    halt 403, json(error: ACCOUNT_DISABLED_MESSAGE) if user&.deactivated?
 
     unless user && user.authenticate(password)
       if user
         new_count = user.failed_login_count + 1
         if new_count >= MAX_FAILED_LOGIN_ATTEMPTS
-          user.update(failed_login_count: new_count, status: 'locked', locked_at: Time.now)
+          # Locking the account has to cut off the sessions it already has,
+          # otherwise a brute-force that trips the lock leaves any session
+          # opened earlier (or stolen) able to keep refreshing indefinitely.
+          DB.transaction do
+            user.update(failed_login_count: new_count, status: 'locked', locked_at: Time.now)
+            RefreshToken.where(user_id: user.id, revoked_at: nil).update(revoked_at: Time.now)
+          end
           halt 423, json(error: ACCOUNT_DISABLED_MESSAGE)
         else
           user.update(failed_login_count: new_count)
@@ -172,13 +178,21 @@ class AuthRoutes < Sinatra::Base
     reset_token = raw_token && PasswordResetToken.first(token: raw_token)
     halt 422, json(error: 'Invalid or expired reset link') if reset_token.nil? || reset_token.expired? || reset_token.used?
 
+    user = reset_token.user
+
+    # A deactivated account is not reactivated — and is certainly not handed
+    # a working session — by resetting its password. A locked one is: the
+    # reset link is the self-service way out of a lockout, so the lock state
+    # is cleared below once the new password is accepted.
+    halt 403, json(error: ACCOUNT_DISABLED_MESSAGE) if user.deactivated?
+
     errors = {}
     errors[:password] = 'Password must be at least 8 characters and include a digit and a symbol' unless password_policy_valid?(password)
     errors[:password_confirmation] = "Passwords don't match" unless password == @payload['password_confirmation']
     halt 422, json(errors: errors) unless errors.empty?
 
-    user = reset_token.user
-    user.update(password: password)
+    unlocked_status = user.locked? ? 'active' : user.status
+    user.update(password: password, failed_login_count: 0, locked_at: nil, status: unlocked_status)
     reset_token.update(used_at: Time.now)
     RefreshToken.where(user_id: user.id, revoked_at: nil).update(revoked_at: Time.now)
 
