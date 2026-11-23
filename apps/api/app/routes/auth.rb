@@ -99,6 +99,50 @@ class AuthRoutes < Sinatra::Base
     json(available: User.find_by_username_ci(username).nil?)
   end
 
+  post '/auth/register' do
+    username = @payload['username']
+    password = @payload['password']
+
+    errors = {}
+    errors[:username] = 'Invalid username format' unless username_format_valid?(username)
+    errors[:username] = 'Username is already taken' if errors[:username].nil? && username && User.find_by_username_ci(username)
+    errors[:password] = 'Password must be at least 8 characters and include a digit and a symbol' unless password_policy_valid?(password)
+    errors[:password_confirmation] = "Passwords don't match" unless password == @payload['password_confirmation']
+    errors[:accept_terms] = 'You must accept the terms' unless @payload['accept_terms'] == true
+    halt 422, json(errors: errors) unless errors.empty?
+
+    user = User.create(
+      role: 'patient',
+      status: 'active',
+      must_change_password: false,
+      username: username,
+      password: password,
+      email: @payload['email'],
+      phone: @payload['phone'],
+      first_name: @payload['first_name'],
+      last_name: @payload['last_name'],
+      date_of_birth: @payload['date_of_birth'],
+      gender: @payload['gender']
+    )
+
+    access_token = TokenService.issue_access_token(user)
+    raw_refresh_token = TokenService.issue_refresh_token(user, remember_me: false)
+    set_refresh_cookie(raw_refresh_token, remember_me: false)
+
+    status 201
+    json(
+      access_token: access_token,
+      must_change_password: user.must_change_password,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        first_name: user.first_name,
+        last_name: user.last_name
+      }
+    )
+  end
+
   # Sets the refresh token as an HttpOnly cookie. Reused by Tasks 8
   # (refresh), 10, and 12 wherever a refresh token needs to be (re)issued.
   def set_refresh_cookie(raw_token, remember_me:)
@@ -117,5 +161,14 @@ class AuthRoutes < Sinatra::Base
   # Reused by Task 11 (register) and Task 10 (username-availability).
   def username_format_valid?(username)
     /\A[A-Za-z0-9._]{4,20}\z/.match?(username) if username
+  end
+
+  # Validates password strength: at least 8 characters, with at least one
+  # digit and one symbol. Reused by Task 11 (register), Task 12 (reset
+  # password), and Task 13 (change password).
+  def password_policy_valid?(password)
+    return false unless password.is_a?(String)
+
+    password.length >= 8 && password.match?(/\d/) && password.match?(/[^A-Za-z0-9]/)
   end
 end
