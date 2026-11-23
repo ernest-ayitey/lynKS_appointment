@@ -12,8 +12,12 @@ class AuthRoutes < Sinatra::Base
   ACCOUNT_DISABLED_MESSAGE = "This account can't sign in right now"
 
   before do
-    request.body.rewind
-    @payload = JSON.parse(request.body.read)
+    if request.body
+      request.body.rewind
+      @payload = JSON.parse(request.body.read)
+    else
+      @payload = {}
+    end
   rescue JSON::ParserError
     @payload = {}
   end
@@ -88,6 +92,13 @@ class AuthRoutes < Sinatra::Base
     status 204
   end
 
+  get '/auth/username-availability' do
+    username = params['username']
+    halt 422, json(error: 'Invalid username format') unless username_format_valid?(username)
+
+    json(available: User.find_by_username_ci(username).nil?)
+  end
+
   # Sets the refresh token as an HttpOnly cookie. Reused by Tasks 8
   # (refresh), 10, and 12 wherever a refresh token needs to be (re)issued.
   def set_refresh_cookie(raw_token, remember_me:)
@@ -100,5 +111,11 @@ class AuthRoutes < Sinatra::Base
     attributes << 'SameSite=Lax'
     attributes << 'Secure' if ENV['RACK_ENV'] != 'test'
     response.headers['Set-Cookie'] = attributes.join('; ')
+  end
+
+  # Validates username format: 4-20 characters, alphanumeric plus dots and underscores.
+  # Reused by Task 11 (register) and Task 10 (username-availability).
+  def username_format_valid?(username)
+    /\A[A-Za-z0-9._]{4,20}\z/.match?(username) if username
   end
 end
