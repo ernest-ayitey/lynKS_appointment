@@ -695,9 +695,10 @@ Expected: FAIL — route doesn't exist (404).
 - [ ] **Step 3: Implement `POST /auth/login` in `app/routes/auth.rb`**
 
 Flow: parse JSON body (`username`, `password`, `remember_me` default
-false); find user case-insensitively; if `status == 'locked'` or
-`'deactivated'` → 403 `{error: "This account can't sign in right now"}`;
-if missing or `!user.authenticate(password)` → increment
+false); find user case-insensitively; if `status == 'locked'` → 423, if
+`status == 'deactivated'` → 403 (both `{error: "This account can't sign in
+right now"}`) — locked is always 423, deactivated is always 403, regardless
+of which attempt triggers it; if missing or `!user.authenticate(password)` → increment
 `failed_login_count`; if that increment reaches 5, set `status: 'locked',
 locked_at: Time.now` **and respond 423** (not 401) for this same request —
 the request that trips the lockout gets the locked response, same as any
