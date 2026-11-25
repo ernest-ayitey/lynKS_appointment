@@ -58,6 +58,12 @@ RSpec.describe 'GET/PUT /api/v1/doctor/availability' do
       expect(JSON.parse(last_response.body)).to eq('days' => %w[2027-03-10 2027-03-15])
     end
 
+    it "returns the resulting days for the touched month in the PUT response itself" do
+      put_availability(TokenService.issue_access_token(doctor), { set: %w[2027-03-05 2027-03-06] })
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)).to eq('days' => %w[2027-03-05 2027-03-06])
+    end
+
     it 'removes previously-set dates named in unset' do
       put_availability(TokenService.issue_access_token(doctor), { set: %w[2027-03-10 2027-03-15] })
 
@@ -85,9 +91,26 @@ RSpec.describe 'GET/PUT /api/v1/doctor/availability' do
       expect(DoctorAvailabilityDay.where(user_id: doctor.id).count).to eq(0)
     end
 
+    it 'accepts a date exactly at the booking window boundary (today + 180 days)' do
+      at_boundary = (Date.today + 180).iso8601
+
+      put_availability(TokenService.issue_access_token(doctor), { set: [at_boundary] })
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)).to eq('days' => [at_boundary])
+    end
+
     it 'rejects the whole request when one date is malformed, writing none of it' do
       put_availability(TokenService.issue_access_token(doctor),
                         { set: ['2027-03-10', 'not-a-date'] })
+      expect(last_response.status).to eq(422)
+      expect(DoctorAvailabilityDay.where(user_id: doctor.id).count).to eq(0)
+    end
+
+    it 'rejects the whole request when one date is valid but too far out, writing none of it' do
+      far_future = (Date.today + 181).iso8601
+
+      put_availability(TokenService.issue_access_token(doctor),
+                        { set: ['2027-03-10', far_future] })
       expect(last_response.status).to eq(422)
       expect(DoctorAvailabilityDay.where(user_id: doctor.id).count).to eq(0)
     end
