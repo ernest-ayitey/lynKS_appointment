@@ -1,6 +1,15 @@
 require_relative '../config/environment'
 require 'date'
 
+# This script creates active doctor accounts whose password is published in
+# this file and echoed to stdout, so it must never run anywhere real. The
+# nil default matches the app's convention of treating an unset RACK_ENV as
+# development.
+SEED_ENVIRONMENTS = %w[development test].freeze
+unless SEED_ENVIRONMENTS.include?(ENV['RACK_ENV'] || 'development')
+  abort "db:seed is for #{SEED_ENVIRONMENTS.join('/')} only (RACK_ENV=#{ENV['RACK_ENV']})"
+end
+
 # Demo departments and doctors for local dev, so there's someone to book
 # against ahead of the Admin plan's real account-creation UI.
 #
