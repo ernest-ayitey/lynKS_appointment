@@ -114,14 +114,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     async function bootstrap() {
       try {
-        const response = await apiRequest<SessionResponse>('/auth/refresh', { method: 'POST' });
+        // /auth/refresh only ever returns {access_token} — never a user or
+        // must_change_password, even if some future backend change starts
+        // including them. The cached profile hydrated at mount (set only
+        // by login/register/reset/change) is the sole source of truth for
+        // who's authenticated on boot.
+        const response = await apiRequest<RefreshResponse>('/auth/refresh', { method: 'POST' });
         if (cancelled) return;
-        if (response.user) {
-          // The real /auth/refresh response never includes a user today,
-          // but if a future backend starts sending one, trust it directly.
-          applySession(response);
-          return;
-        }
         const cachedUser = readCachedUser();
         if (!cachedUser) {
           // Fail closed: a successful refresh with no cached user profile
