@@ -147,9 +147,18 @@ describe('DoctorAvailabilityPage', () => {
     });
   });
 
-  it('shows a banner when saving availability fails', async () => {
+  // The real PUT /doctor/availability 422 always carries the generic
+  // 'Please correct the highlighted fields' as `message` and the actionable
+  // detail under `errors.dates` — see apps/api/app/routes/doctors.rb and
+  // spec/requests/doctor_availability_spec.rb. The earlier version of this
+  // test put the actionable text in `message` too, a shape the backend never
+  // sends, which is how the "banner shows only the generic message" bug got
+  // through.
+  it('shows the actionable field detail, not the generic message, on a real 422', async () => {
     updateAvailability.mockRejectedValueOnce(
-      new ApiError('Enter valid dates (YYYY-MM-DD)', 422, { dates: 'Enter valid dates (YYYY-MM-DD)' }),
+      new ApiError('Please correct the highlighted fields', 422, {
+        dates: 'Dates must not be in the past',
+      }),
     );
     const user = userEvent.setup();
     renderPage();
@@ -158,7 +167,32 @@ describe('DoctorAvailabilityPage', () => {
     await user.click(screen.getByRole('button', { name: dayToToggleOn }));
     await user.click(screen.getByRole('button', { name: /save availability/i }));
 
-    expect(await screen.findByText('Enter valid dates (YYYY-MM-DD)')).toBeInTheDocument();
+    expect(await screen.findByText('Dates must not be in the past')).toBeInTheDocument();
+    expect(screen.queryByText('Please correct the highlighted fields')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the message when a failure carries no field errors', async () => {
+    updateAvailability.mockRejectedValueOnce(new ApiError('Session expired', 401));
+    const user = userEvent.setup();
+    renderPage();
+    await waitForInitialLoad();
+
+    await user.click(screen.getByRole('button', { name: dayToToggleOn }));
+    await user.click(screen.getByRole('button', { name: /save availability/i }));
+
+    expect(await screen.findByText('Session expired')).toBeInTheDocument();
+  });
+
+  it('shows the generic message when the save fails with something other than an ApiError', async () => {
+    updateAvailability.mockRejectedValueOnce(new Error('network down'));
+    const user = userEvent.setup();
+    renderPage();
+    await waitForInitialLoad();
+
+    await user.click(screen.getByRole('button', { name: dayToToggleOn }));
+    await user.click(screen.getByRole('button', { name: /save availability/i }));
+
+    expect(await screen.findByText(/something went wrong/i)).toBeInTheDocument();
   });
 
   it('loads existing session settings into the form', async () => {

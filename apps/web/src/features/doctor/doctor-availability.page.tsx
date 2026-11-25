@@ -208,7 +208,19 @@ export default function DoctorAvailabilityPage() {
       const response = await getAvailability(authedFetch, monthKey(monthDate));
       setAvailableDays(new Set(response.days));
     } catch (err) {
-      setAvailabilityBanner(err instanceof ApiError ? err.message : GENERIC_ERROR_MESSAGE);
+      // The calendar has no per-field inputs to hang errors off, so this
+      // banner is the only place a validation failure can surface. The
+      // backend's 422 `message` is always the generic "Please correct the
+      // highlighted fields" — the actionable detail ("Dates must not be in
+      // the past", "Dates must be within 180 days from today", "Enter valid
+      // dates (YYYY-MM-DD)") is in `errors.dates`, the single key
+      // PUT /doctor/availability reports under. Prefer it; fall back to
+      // `message` for responses with no field errors at all (401/403/500).
+      if (err instanceof ApiError) {
+        setAvailabilityBanner(err.errors?.dates ?? err.message);
+      } else {
+        setAvailabilityBanner(GENERIC_ERROR_MESSAGE);
+      }
     } finally {
       setSavingAvailability(false);
     }
