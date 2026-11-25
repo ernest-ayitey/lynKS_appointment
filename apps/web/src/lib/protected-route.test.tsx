@@ -16,6 +16,12 @@ function renderAt(initialPath: string) {
         <Route path="/login" element={<div>Login page</div>} />
         <Route path="/change-password" element={<ProtectedRoute>Change password page</ProtectedRoute>} />
         <Route path="/" element={<ProtectedRoute>Protected content</ProtectedRoute>} />
+        <Route
+          path="/doctor-only"
+          element={
+            <ProtectedRoute allowedRoles={['doctor']}>Doctor-only content</ProtectedRoute>
+          }
+        />
       </Routes>
     </MemoryRouter>,
   );
@@ -84,5 +90,28 @@ describe('ProtectedRoute', () => {
     renderAt('/change-password');
 
     expect(screen.getByText('Change password page')).toBeInTheDocument();
+  });
+
+  it('redirects to / when allowedRoles is set and the user role is not in it', () => {
+    useAuth.mockReturnValue({
+      status: 'authenticated',
+      user: { role: 'patient', must_change_password: false },
+    });
+
+    renderAt('/doctor-only');
+
+    expect(screen.getByText('Protected content')).toBeInTheDocument();
+    expect(screen.queryByText('Doctor-only content')).not.toBeInTheDocument();
+  });
+
+  it('renders children when allowedRoles is set and the user role is in it', () => {
+    useAuth.mockReturnValue({
+      status: 'authenticated',
+      user: { role: 'doctor', must_change_password: false },
+    });
+
+    renderAt('/doctor-only');
+
+    expect(screen.getByText('Doctor-only content')).toBeInTheDocument();
   });
 });
