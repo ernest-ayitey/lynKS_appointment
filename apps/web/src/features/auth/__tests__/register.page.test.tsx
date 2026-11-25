@@ -138,4 +138,34 @@ describe('RegisterPage', () => {
 
     expect(await screen.findByText("Passwords don't match")).toBeInTheDocument();
   });
+
+  it.each([
+    ['first_name', 'First name is required'],
+    ['last_name', 'Last name is required'],
+    ['gender', 'Gender is not a valid option'],
+  ])('renders a 422 error for %s, which the field map claims to support', async (backendKey, message) => {
+    checkUsernameAvailability.mockResolvedValue(true);
+    register.mockRejectedValueOnce(
+      new ApiError('Please correct the highlighted fields', 422, { [backendKey]: message }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await fillRequiredFields(user);
+    await user.click(screen.getByRole('button', { name: /create account/i }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+  });
+
+  it('renders a generic banner when the request fails with something other than an ApiError', async () => {
+    checkUsernameAvailability.mockResolvedValue(true);
+    register.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const user = userEvent.setup();
+    renderPage();
+
+    await fillRequiredFields(user);
+    await user.click(screen.getByRole('button', { name: /create account/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/something went wrong/i);
+  });
 });

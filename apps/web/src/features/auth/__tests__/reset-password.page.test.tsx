@@ -84,4 +84,38 @@ describe('ResetPasswordPage', () => {
     expect(link).toHaveAttribute('href', '/forgot-password');
     expect(navigate).not.toHaveBeenCalled();
   });
+
+  it('renders the overall message as a banner alongside a field error, keeping the form', async () => {
+    resetPassword.mockRejectedValueOnce(
+      new ApiError('Please correct the highlighted fields', 422, {
+        password_confirmation: "Passwords don't match",
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await fillAndSubmit(user);
+
+    expect(await screen.findByText('Please correct the highlighted fields')).toBeInTheDocument();
+    expect(screen.getByText("Passwords don't match")).toBeInTheDocument();
+    // A field error means retyping can help, so the form stays and the
+    // "request a new link" escape hatch is not offered.
+    expect(screen.getByLabelText(/^new password$/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /request a new link/i })).not.toBeInTheDocument();
+  });
+
+  it('renders a generic banner and keeps the form when the request fails with something other than an ApiError', async () => {
+    resetPassword.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const user = userEvent.setup();
+    renderPage();
+
+    await fillAndSubmit(user);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/something went wrong/i);
+    // The link may well still be valid — a network failure must not send the
+    // user off to request a new one.
+    expect(screen.getByLabelText(/^new password$/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /request a new link/i })).not.toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+  });
 });

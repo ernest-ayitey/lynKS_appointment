@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '../../lib/api-client';
+import { GENERIC_ERROR_MESSAGE, applyApiError } from '../../lib/api-error-handling';
 import { useAuth } from '../../lib/auth-context';
 
 interface ResetPasswordFormValues {
@@ -18,10 +19,12 @@ export default function ResetPasswordPage() {
   const { token } = useParams<{ token: string }>();
   const { resetPassword } = useAuth();
   const navigate = useNavigate();
-  // Set only for a 422 with no field errors (an invalid/expired link) — the
-  // one case with no input to attach the message to, so it renders as a
-  // standalone banner with a way back to request a fresh link.
-  const [linkError, setLinkError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  // True when the failure attached to no input at all — a 422 for an
+  // invalid/expired link, a 401, a network failure. Those are the cases where
+  // retyping the same passwords cannot help, so the banner also offers a way
+  // back to request a fresh link.
+  const [offerNewLink, setOfferNewLink] = useState(false);
   const {
     register,
     handleSubmit,
@@ -32,7 +35,8 @@ export default function ResetPasswordPage() {
   });
 
   async function onSubmit(data: ResetPasswordFormValues) {
-    setLinkError(null);
+    setFormError(null);
+    setOfferNewLink(false);
     try {
       await resetPassword(token ?? '', {
         password: data.password,
@@ -41,19 +45,19 @@ export default function ResetPasswordPage() {
       navigate('/');
     } catch (err) {
       if (err instanceof ApiError) {
-        if (err.errors) {
-          for (const [field, message] of Object.entries(err.errors)) {
-            const formField = BACKEND_FIELD_TO_FORM_FIELD[field];
-            if (formField) {
-              setError(formField, { message });
-            }
-          }
-          return;
-        }
-        setLinkError(err.message);
+        const attachedFieldError = applyApiError(
+          err,
+          BACKEND_FIELD_TO_FORM_FIELD,
+          setError,
+          setFormError,
+        );
+        setOfferNewLink(!attachedFieldError);
         return;
       }
-      throw err;
+      // Not an ApiError: the request never got a response (backend
+      // unreachable, offline, fetch rejected). Surface it rather than
+      // failing silently.
+      setFormError(GENERIC_ERROR_MESSAGE);
     }
   }
 
@@ -62,15 +66,24 @@ export default function ResetPasswordPage() {
       <div className="w-full max-w-sm rounded-lg bg-white p-8 shadow">
         <h1 className="mb-6 text-center text-2xl font-semibold text-slate-900">Reset password</h1>
 
-        {linkError ? (
+        {offerNewLink && formError ? (
+          // Nothing the user can retype here will help (the link itself is
+          // dead, or the request was rejected outright), so the form is
+          // replaced by the banner and a way to start over.
           <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-            {linkError}{' '}
+            {formError}{' '}
             <Link to="/forgot-password" className="font-medium underline">
               Request a new link
             </Link>
           </div>
         ) : (
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+            {formError && (
+              <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+                {formError}
+              </div>
+            )}
+
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-slate-700">
                 New password

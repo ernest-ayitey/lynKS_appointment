@@ -103,4 +103,46 @@ describe('ChangePasswordPage', () => {
     expect(await screen.findByText('Incorrect current password')).toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();
   });
+
+  it('renders a banner for an ApiError with no field-level errors', async () => {
+    mockUser(false);
+    // A 401/403/500 carries only a message — there is no input to attach it
+    // to, and it used to be swallowed entirely.
+    changePassword.mockRejectedValueOnce(new ApiError('Session expired, please sign in again', 401));
+    const user = userEvent.setup();
+    renderPage();
+
+    await fillAndSubmit(user);
+
+    expect(await screen.findByText('Session expired, please sign in again')).toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('renders the overall message as a banner alongside a field error', async () => {
+    mockUser(false);
+    changePassword.mockRejectedValueOnce(
+      new ApiError('Please correct the highlighted fields', 422, {
+        current_password: 'Incorrect current password',
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await fillAndSubmit(user);
+
+    expect(await screen.findByText('Please correct the highlighted fields')).toBeInTheDocument();
+    expect(screen.getByText('Incorrect current password')).toBeInTheDocument();
+  });
+
+  it('renders a generic banner when the request fails with something other than an ApiError', async () => {
+    mockUser(false);
+    changePassword.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const user = userEvent.setup();
+    renderPage();
+
+    await fillAndSubmit(user);
+
+    expect(await screen.findByText(/something went wrong/i)).toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+  });
 });

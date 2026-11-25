@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { ApiError } from '../../lib/api-client';
+import { GENERIC_ERROR_MESSAGE, applyApiError } from '../../lib/api-error-handling';
 import { useAuth } from '../../lib/auth-context';
 
 interface ChangePasswordFormValues {
@@ -18,6 +20,7 @@ const BACKEND_FIELD_TO_FORM_FIELD: Record<string, keyof ChangePasswordFormValues
 export default function ChangePasswordPage() {
   const { user, changePassword } = useAuth();
   const navigate = useNavigate();
+  const [formError, setFormError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -28,6 +31,7 @@ export default function ChangePasswordPage() {
   });
 
   async function onSubmit(data: ChangePasswordFormValues) {
+    setFormError(null);
     try {
       await changePassword({
         current_password: data.currentPassword,
@@ -37,17 +41,13 @@ export default function ChangePasswordPage() {
       navigate('/');
     } catch (err) {
       if (err instanceof ApiError) {
-        if (err.errors) {
-          for (const [field, message] of Object.entries(err.errors)) {
-            const formField = BACKEND_FIELD_TO_FORM_FIELD[field];
-            if (formField) {
-              setError(formField, { message });
-            }
-          }
-        }
+        applyApiError(err, BACKEND_FIELD_TO_FORM_FIELD, setError, setFormError);
         return;
       }
-      throw err;
+      // Not an ApiError: the request never got a response (backend
+      // unreachable, offline, fetch rejected). Surface it rather than
+      // failing silently.
+      setFormError(GENERIC_ERROR_MESSAGE);
     }
   }
 
@@ -63,6 +63,12 @@ export default function ChangePasswordPage() {
         )}
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+          {formError && (
+            <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+              {formError}
+            </div>
+          )}
+
           <div>
             <label htmlFor="currentPassword" className="block text-sm font-medium text-slate-700">
               Current password

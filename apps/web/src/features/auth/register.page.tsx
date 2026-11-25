@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
 import { ApiError } from '../../lib/api-client';
+import { GENERIC_ERROR_MESSAGE, applyApiError } from '../../lib/api-error-handling';
 import { useAuth } from '../../lib/auth-context';
 import { checkUsernameAvailability } from './auth.api';
 
@@ -111,18 +112,13 @@ export default function RegisterPage() {
       navigate('/');
     } catch (err) {
       if (err instanceof ApiError) {
-        setFormError(err.message);
-        if (err.errors) {
-          for (const [field, message] of Object.entries(err.errors)) {
-            const formField = BACKEND_FIELD_TO_FORM_FIELD[field];
-            if (formField) {
-              setError(formField, { message });
-            }
-          }
-        }
+        applyApiError(err, BACKEND_FIELD_TO_FORM_FIELD, setError, setFormError);
         return;
       }
-      throw err;
+      // Not an ApiError: the request never got a response (backend
+      // unreachable, offline, fetch rejected). Surface it rather than
+      // failing silently.
+      setFormError(GENERIC_ERROR_MESSAGE);
     }
   }
 
@@ -150,6 +146,9 @@ export default function RegisterPage() {
                 className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                 {...register('firstName', { required: true })}
               />
+              {errors.firstName && (
+                <p className="mt-1 text-sm text-red-600">{errors.firstName.message}</p>
+              )}
             </div>
 
             <div>
@@ -163,6 +162,9 @@ export default function RegisterPage() {
                 className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                 {...register('lastName', { required: true })}
               />
+              {errors.lastName && (
+                <p className="mt-1 text-sm text-red-600">{errors.lastName.message}</p>
+              )}
             </div>
           </div>
 
@@ -198,6 +200,7 @@ export default function RegisterPage() {
               <option value="male">Male</option>
               <option value="other">Other</option>
             </select>
+            {errors.gender && <p className="mt-1 text-sm text-red-600">{errors.gender.message}</p>}
           </div>
 
           <div>
