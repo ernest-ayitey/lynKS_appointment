@@ -246,10 +246,17 @@ decided now so Task 3 doesn't have to revisit this route).
   same shape as the merged `User`/`RefreshToken` tables) and the route**
 
 `DoctorRoutes < ApiRoutes` (reuse the shared error envelope/`not_found`/
-`error 500` handlers from `ApiRoutes`, same as `AuthRoutes` does).
-`before { authenticate! }` for the whole file (every route in it needs
-at least a valid session — role restrictions come per-route in later
-tasks). `get('/departments') { json(Department.all.map { |d|
+`error 500` handlers from `ApiRoutes`, same as `AuthRoutes` does). Use a
+**path-scoped** `before('/departments') { authenticate! }`, not a
+blanket `before { authenticate! }` for the whole file — this file is
+mounted in a `Rack::Cascade` alongside `HealthRoutes`/`AuthRoutes`
+(`app/api.rb`), which only cascades past a 404; a blanket filter would
+run even for a request this file has no route for (e.g. a typo'd
+`/auth/...` path reaching this file last in the cascade) and turn what
+should be a 404 into a 401, breaking the cascade for every class mounted
+after this one. Every later task in this file (3-6) needs the same
+path-scoped treatment — one `before('/the/new/path') { ... }` per
+route, never a file-wide filter. `get('/departments') { json(Department.all.map { |d|
 {id: d.id, name: d.name, doctor_count: d.doctor_profiles_dataset.count}
 }) }` — this assumes Task 3's `doctor_profiles_dataset` association;
 since Task 3 hasn't run yet, stub this as `doctor_count: 0` for now and
@@ -424,9 +431,12 @@ clinic deployment" constraint); no timezone math needed.
 
 - [ ] **Step 5: Implement `DoctorSessionSettings` and the routes**
 
-`before '/doctor/session-settings' do require_role!('doctor') end`
-(role-gating only this one path, same pattern the merged auth plan used
-for `/auth/password/change`). Validate the time-range/divisibility rule
+`before('/doctor/session-settings') { authenticate!; require_role!('doctor') }`
+— **`authenticate!` must run first**, in the same scoped filter, not a
+separate one: `require_role!` reads `current_user.role`, which is only
+populated once `authenticate!` has run (Task 1's own review flagged
+this exact ordering risk). Same path-scoping rule as Task 2 — no
+blanket file-wide filter. Validate the time-range/divisibility rule
 server-side before upserting (`DoctorSessionSettings.find_or_create(user:
 current_user) { |s| ... }.update(...)`, or `update_or_create` — your
 call on the exact Sequel idiom).
@@ -514,7 +524,8 @@ but this plan writes only `true` rows.)
 
 - [ ] **Step 5: Implement `DoctorAvailabilityDay` and the routes**
 
-`before '/doctor/availability' do require_role!('doctor') end`. `PUT`
+`before('/doctor/availability') { authenticate!; require_role!('doctor') }`
+— same ordering requirement and path-scoping as Task 4 above. `PUT`
 validates every date in `set`/`unset` is within the sane bound before
 writing any of them (all-or-nothing — reject the whole request on one
 bad date rather than partially applying).
@@ -572,6 +583,12 @@ git commit -m "feat: add doctor availability days with bounded set/unset"
 - [ ] **Step 2: Run tests to verify they fail**
 
 - [ ] **Step 3: Implement both routes**
+
+Same path-scoping rule as Tasks 2/4/5: `before('/doctors/:id/availability')
+{ authenticate! }` and `before('/doctors/:id/slots') { authenticate! }`
+(no `require_role!` — any authenticated role may call these) — never a
+blanket file-wide filter, for the `Rack::Cascade` reason documented in
+`doctors.rb` since Task 2.
 
 Slot generation: starting at `start_time`, stepping by
 `slot_length_minutes`, stopping before `end_time`, skipping any slot
