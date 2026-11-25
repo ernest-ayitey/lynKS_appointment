@@ -43,6 +43,42 @@ RSpec.describe 'GET /api/v1/departments' do
       [{ 'id' => department.id, 'name' => 'Cardiology', 'doctor_count' => 1 }]
     )
   end
+
+  it 'excludes a locked doctor from doctor_count, matching GET /doctors' do
+    department = Department.create(name: 'Cardiology')
+    locked_doctor = User.create(role: 'doctor', username: 'docL', email: 'docl@x.com',
+      first_name: 'Lee', last_name: 'Locked', password: 'Sup3r!word', status: 'locked')
+    DoctorProfile.create(user: locked_doctor, department: department, specialty_title: 'Cardiologist')
+
+    get_departments(TokenService.issue_access_token(user))
+    expect(last_response.status).to eq(200)
+    expect(JSON.parse(last_response.body)).to eq(
+      [{ 'id' => department.id, 'name' => 'Cardiology', 'doctor_count' => 0 }]
+    )
+  end
+
+  it 'excludes a deactivated doctor from doctor_count' do
+    department = Department.create(name: 'Cardiology')
+    deactivated_doctor = User.create(role: 'doctor', username: 'docD', email: 'docd@x.com',
+      first_name: 'Dee', last_name: 'Active', password: 'Sup3r!word', status: 'deactivated')
+    DoctorProfile.create(user: deactivated_doctor, department: department, specialty_title: 'Cardiologist')
+
+    get_departments(TokenService.issue_access_token(user))
+    expect(JSON.parse(last_response.body).first['doctor_count']).to eq(0)
+  end
+
+  it 'counts only the active doctors when a department has a mix' do
+    department = Department.create(name: 'Cardiology')
+    active_doctor = User.create(role: 'doctor', username: 'docA', email: 'doca@x.com',
+      first_name: 'Dana', last_name: 'Who', password: 'Sup3r!word')
+    locked_doctor = User.create(role: 'doctor', username: 'docL', email: 'docl@x.com',
+      first_name: 'Lee', last_name: 'Locked', password: 'Sup3r!word', status: 'locked')
+    DoctorProfile.create(user: active_doctor, department: department, specialty_title: 'Cardiologist')
+    DoctorProfile.create(user: locked_doctor, department: department, specialty_title: 'Cardiologist')
+
+    get_departments(TokenService.issue_access_token(user))
+    expect(JSON.parse(last_response.body).first['doctor_count']).to eq(1)
+  end
 end
 
 RSpec.describe 'GET /api/v1/doctors' do
@@ -93,6 +129,17 @@ RSpec.describe 'GET /api/v1/doctors' do
     expect(last_response.status).to eq(200)
     body = JSON.parse(last_response.body)
     expect(body.map { |d| d['id'] }).to eq([cardio_doc.id])
+  end
+
+  it 'treats a blank department_id as no filter rather than a filter matching nothing' do
+    cardiology = Department.create(name: 'Cardiology')
+    doctor = User.create(role: 'doctor', username: 'docA', email: 'doca@x.com',
+      first_name: 'Dana', last_name: 'Who', password: 'Sup3r!word')
+    DoctorProfile.create(user: doctor, department: cardiology, specialty_title: 'Cardiologist')
+
+    get_doctors(TokenService.issue_access_token(user), department_id: '')
+    expect(last_response.status).to eq(200)
+    expect(JSON.parse(last_response.body).map { |d| d['id'] }).to eq([doctor.id])
   end
 
   it 'excludes a doctor whose account is locked' do

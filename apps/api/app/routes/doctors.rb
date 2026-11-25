@@ -85,18 +85,30 @@ class DoctorRoutes < ApiRoutes
     @payload = {}
   end
 
+  # `doctor_count` counts only the doctors `GET /doctors` would actually
+  # list: counting every profile row regardless of its user's role/status
+  # would promise patients doctors they can't then see or book.
   get '/departments' do
-    json(Department.all.map { |d| { id: d.id, name: d.name, doctor_count: d.doctor_profiles_dataset.count } })
+    json(Department.all.map do |d|
+      { id: d.id,
+        name: d.name,
+        doctor_count: d.doctor_profiles_dataset.where(user_id: User.active_doctors.select(:id)).count }
+    end)
   end
 
   # Only doctors whose account is active are patient-facing: account
   # lockout after 5 failed logins is already live in the merged backend, so
-  # a locked (or otherwise blocked) doctor must not appear here. The same
-  # filter belongs on every other patient-facing doctor listing too.
+  # a locked (or otherwise blocked) doctor must not appear here. That filter
+  # is `User.active_doctors`, shared with every other patient-facing doctor
+  # lookup in this file.
   get '/doctors' do
-    active_doctor_ids = User.where(role: 'doctor', status: 'active').select_map(:id)
-    profiles = DoctorProfile.eager(:department, :user).where(user_id: active_doctor_ids)
-    profiles = profiles.where(department_id: params['department_id']) if params['department_id']
+    profiles = DoctorProfile.eager(:department, :user).where(user_id: User.active_doctors.select(:id))
+
+    # An empty `department_id` (`/doctors?department_id=`) means "no filter",
+    # the same as omitting it — not a filter that matches nothing. A blank
+    # string is truthy in Ruby, so this needs the explicit check.
+    department_id = params['department_id']
+    profiles = profiles.where(department_id: department_id) unless department_id.nil? || department_id == ''
 
     json(profiles.all.map do |profile|
       {
@@ -340,11 +352,11 @@ class DoctorRoutes < ApiRoutes
     end
 
     # An active (not locked/deactivated/invited) doctor by user id, or nil.
-    # Mirrors `GET /doctors`' `active_doctor_ids` filter exactly, so a
-    # locked or deactivated doctor id 404s here the same way it's excluded
-    # from that list.
+    # Shares `User.active_doctors` with `GET /doctors` and `doctor_count`, so
+    # a locked or deactivated doctor id 404s here the same way it's excluded
+    # from that list — and can't drift apart from it.
     def active_doctor(id)
-      User.where(id: id, role: 'doctor', status: 'active').first
+      User.active_doctors.where(id: id).first
     end
 
     # Resolves the `month` query param per this file's shared contract: a

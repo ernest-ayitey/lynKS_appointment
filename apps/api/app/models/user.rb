@@ -35,6 +35,17 @@ class User < Sequel::Model(:users)
     status == 'deactivated'
   end
 
+  # The one definition of "a doctor patients are allowed to see": role
+  # 'doctor' and an account that is actually active, so a locked (5 failed
+  # logins) or deactivated doctor is excluded everywhere at once. Every
+  # patient-facing doctor lookup — the list, the per-doctor availability and
+  # slot endpoints, and `doctor_count` — composes this dataset rather than
+  # repeating the predicate, which is how `doctor_count` had drifted into
+  # counting locked doctors.
+  def self.active_doctors
+    where(role: 'doctor', status: 'active')
+  end
+
   # Returns nil for anything that isn't a string, so a request body like
   # `{"username": 123}` is an ordinary "no such user" rather than a 500 on
   # NoMethodError.
