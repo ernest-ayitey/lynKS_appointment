@@ -233,21 +233,24 @@ class DoctorRoutes < ApiRoutes
       parsed.nil? ? invalid_dates << date_string : parsed_by_date[date_string] = parsed
     end
 
-    # Every date must sit inside the bookable window — [today, today + 180]
-    # — on both ends. Only the upper bound existed before, so a client bug
-    # (or a hand-rolled request) could write availability for a date years
-    # in the past, which no patient can ever book. All-or-nothing, same as
-    # the malformed-date case: one bad date rejects the whole request.
+    # Range rules, all-or-nothing like the malformed-date case above: one bad
+    # date rejects the whole request.
+    #
+    # The lower bound is asymmetric on purpose. *Marking* a past date
+    # available is always a client bug — no patient can book it — so `set`
+    # is rejected below today. *Unmarking* one is legitimate cleanup of
+    # stale rows, so `unset` skips the lower bound (it's still parsed for
+    # format, and still subject to the upper bound). Both arrays keep the
+    # upper bound: a date past the booking window is meaningless either way.
     errors = {}
     if invalid_dates.any?
       errors[:dates] = INVALID_DATES_MESSAGE
     else
       today = Date.today
       max_date = today + MAX_BOOKING_WINDOW_DAYS
-      dates = parsed_by_date.values
-      if dates.any? { |date| date < today }
+      if set_dates.any? { |d| parsed_by_date[d] < today }
         errors[:dates] = DATES_IN_PAST_MESSAGE
-      elsif dates.any? { |date| date > max_date }
+      elsif parsed_by_date.values.any? { |date| date > max_date }
         errors[:dates] = DATES_TOO_FAR_MESSAGE
       end
     end

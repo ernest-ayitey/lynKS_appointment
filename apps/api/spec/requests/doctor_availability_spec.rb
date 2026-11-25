@@ -98,6 +98,43 @@ RSpec.describe 'GET/PUT /api/v1/doctor/availability' do
       expect(DoctorAvailabilityDay.where(user_id: doctor.id).count).to eq(0)
     end
 
+    # The lower bound is deliberately asymmetric: a doctor can't newly mark a
+    # past date available, but must always be able to clear a stale one.
+    it 'accepts an unset for a date in the past, removing the row' do
+      past = Date.today - 30
+      DoctorAvailabilityDay.create(user_id: doctor.id, date: past)
+
+      put_availability(TokenService.issue_access_token(doctor), { unset: [past.iso8601] })
+      expect(last_response.status).to eq(200)
+      expect(DoctorAvailabilityDay.where(user_id: doctor.id, date: past).count).to eq(0)
+    end
+
+    it 'accepts an unset for a past date that was never set, as a no-op' do
+      put_availability(TokenService.issue_access_token(doctor), { unset: %w[2019-01-05] })
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)).to eq('days' => [])
+    end
+
+    it 'still applies the upper bound to unset dates, unlike the lower bound' do
+      far_future = (Date.today + 181).iso8601
+
+      put_availability(TokenService.issue_access_token(doctor), { unset: [far_future] })
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['errors']['dates'])
+        .to eq('Dates must be within 180 days from today')
+    end
+
+    it 'rejects a past set date even when a past unset date in the same request is fine' do
+      past = Date.today - 30
+      DoctorAvailabilityDay.create(user_id: doctor.id, date: past)
+
+      put_availability(TokenService.issue_access_token(doctor),
+                        { set: [(Date.today - 1).iso8601], unset: [past.iso8601] })
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['errors']['dates']).to eq('Dates must not be in the past')
+      expect(DoctorAvailabilityDay.where(user_id: doctor.id, date: past).count).to eq(1)
+    end
+
     it 'rejects yesterday, the first date outside the window' do
       put_availability(TokenService.issue_access_token(doctor), { set: [(Date.today - 1).iso8601] })
       expect(last_response.status).to eq(422)
