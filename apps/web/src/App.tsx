@@ -1,39 +1,48 @@
-import { Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import ChangePasswordPage from './features/auth/change-password.page';
+import ForgotPasswordPage from './features/auth/forgot-password.page';
+import LoginPage from './features/auth/login.page';
+import RegisterPage from './features/auth/register.page';
+import ResetPasswordPage from './features/auth/reset-password.page';
+import RoleLandingPage from './features/dashboard/role-landing.page';
+import { AuthProvider } from './lib/auth-context';
+import { ErrorBoundary } from './lib/error-boundary';
+import { ProtectedRoute } from './lib/protected-route';
 
-import { ChooseRoleLocationPage } from './features/auth/choose-role-location.page';
-import { EnterCodePage } from './features/auth/enter-code.page';
-import { PatientSignInPage } from './features/auth/patient-sign-in.page';
-import { StaffSignInPage } from './features/auth/staff-sign-in.page';
-import { StaffTwoStepPage } from './features/auth/staff-two-step.page';
+const queryClient = new QueryClient();
 
-function BookingHomePage() {
+export default function App() {
   return (
-    <main>
-      <h1>lynKS Appointment</h1>
-    </main>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
+              <Route
+                path="/change-password"
+                element={
+                  <ProtectedRoute>
+                    <ChangePasswordPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/"
+                element={
+                  <ProtectedRoute>
+                    <RoleLandingPage />
+                  </ProtectedRoute>
+                }
+              />
+            </Routes>
+          </BrowserRouter>
+        </AuthProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
-
-function StaffDashboardPage() {
-  return (
-    <main>
-      <h1>Staff dashboard</h1>
-    </main>
-  );
-}
-
-function App() {
-  return (
-    <Routes>
-      <Route path="/" element={<BookingHomePage />} />
-      <Route path="/sign-in" element={<PatientSignInPage />} />
-      <Route path="/enter-code" element={<EnterCodePage />} />
-      <Route path="/staff/sign-in" element={<StaffSignInPage />} />
-      <Route path="/staff/two-step" element={<StaffTwoStepPage />} />
-      <Route path="/staff/choose-role-location" element={<ChooseRoleLocationPage />} />
-      <Route path="/staff/dashboard" element={<StaffDashboardPage />} />
-    </Routes>
-  );
-}
-
-export default App;
