@@ -278,7 +278,10 @@ git commit -m "feat: add departments table and GET /departments"
 - Create: `apps/api/db/migrate/006_create_doctor_profiles.rb`,
   `apps/api/app/models/doctor_profile.rb`
 - Modify: `apps/api/app/routes/doctors.rb` (add `GET /doctors`, wire the
-  real `doctor_count` from Task 2's stub)
+  real `doctor_count` from Task 2's stub), `apps/api/app/models/user.rb`
+  (add `one_to_one :doctor_profile` — a Sequel `many_to_one` on one side
+  doesn't give you the reverse accessor; `user.doctor_profile` only
+  works once `User` itself declares it)
 - Test: additions to `apps/api/spec/models/doctor_profile_spec.rb`,
   `apps/api/spec/requests/doctors_spec.rb`
 
@@ -329,8 +332,9 @@ never appears even if queried directly.
 
 - [ ] **Step 4: Run tests to verify they fail**
 
-- [ ] **Step 5: Implement `DoctorProfile`, the `User` association, and
-  the route; fix Task 2's `doctor_count` stub**
+- [ ] **Step 5: Implement `DoctorProfile`, add `one_to_one
+  :doctor_profile` to `User`, and implement the route; fix Task 2's
+  `doctor_count` stub**
 
 `doctor_count: Department#doctor_profiles_dataset.count` now reflects
 real rows. `GET /doctors` joins `doctor_profiles` → `users` filtered to
