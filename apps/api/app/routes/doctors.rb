@@ -31,6 +31,8 @@ class DoctorRoutes < ApiRoutes
   # instead of a hardcoded constant.
   MAX_BOOKING_WINDOW_DAYS = 180
 
+  NOT_FOUND_MESSAGE = 'Not found'
+
   INVALID_DATES_MESSAGE = 'Enter valid dates (YYYY-MM-DD)'
   DATES_TOO_FAR_MESSAGE = "Dates must be within #{MAX_BOOKING_WINDOW_DAYS} days from today".freeze
 
@@ -52,6 +54,11 @@ class DoctorRoutes < ApiRoutes
   # `authenticate!` has populated it.
   before('/doctor/session-settings') { authenticate!; require_role!('doctor') }
   before('/doctor/availability') { authenticate!; require_role!('doctor') }
+
+  # Public to any authenticated role (a patient needs these to render a
+  # booking calendar) — deliberately no `require_role!`.
+  before('/doctors/:id/availability') { authenticate! }
+  before('/doctors/:id/slots') { authenticate! }
 
   before('/doctor/session-settings') do
     if request.body
@@ -178,8 +185,7 @@ class DoctorRoutes < ApiRoutes
   end
 
   get '/doctor/availability' do
-    month = params['month']
-    halt_json_error 422, VALIDATION_FAILED_MESSAGE, month: 'Enter a valid month (YYYY-MM)' unless ISO_MONTH.match?(month.to_s)
+    month = resolve_month_param(params['month'])
 
     json(days: available_dates_in_month(current_user, month))
   end
@@ -216,6 +222,32 @@ class DoctorRoutes < ApiRoutes
     days = months_touched.flat_map { |month| available_dates_in_month(current_user, month) }.uniq.sort
 
     json(days: days)
+  end
+
+  # Public counterpart to `GET /doctor/availability`, keyed by `:id` in the
+  # path instead of `current_user` and open to any authenticated role. Uses
+  # the same locked/deactivated exclusion as `GET /doctors` — and treats
+  # that exclusion as "not found" rather than merely filtered, so a patient
+  # who already has the id can't route around the list filter.
+  get '/doctors/:id/availability' do
+    doctor = active_doctor(params['id'])
+    halt_json_error 404, NOT_FOUND_MESSAGE unless doctor
+
+    month = resolve_month_param(params['month'])
+    json(days: available_dates_in_month(doctor, month))
+  end
+
+  # Every slot the doctor's session settings produce for the given date, per
+  # this plan's documented scope limit: no booked-slot filtering yet. `date`
+  # is validated for the query-param contract but, at this scope, doesn't
+  # otherwise affect which slots come back.
+  get '/doctors/:id/slots' do
+    doctor = active_doctor(params['id'])
+    halt_json_error 404, NOT_FOUND_MESSAGE unless doctor
+
+    resolve_date_param(params['date'])
+    settings = DoctorSessionSettings.first(user_id: doctor.id)
+    json(slots: generate_slots(settings))
   end
 
   helpers do
@@ -265,6 +297,71 @@ class DoctorRoutes < ApiRoutes
 
       DoctorAvailabilityDay.where(user_id: user.id, date: start_date..end_date)
                             .order(:date).select_map(:date).map(&:iso8601)
+    end
+
+    # An active (not locked/deactivated/invited) doctor by user id, or nil.
+    # Mirrors `GET /doctors`' `active_doctor_ids` filter exactly, so a
+    # locked or deactivated doctor id 404s here the same way it's excluded
+    # from that list.
+    def active_doctor(id)
+      User.where(id: id, role: 'doctor', status: 'active').first
+    end
+
+    # Resolves the `month` query param per this file's shared contract: a
+    # missing/blank value defaults to the current month; a
+    # present-but-unparseable one halts with 422.
+    def resolve_month_param(raw)
+      return Date.today.strftime('%Y-%m') if raw.nil? || raw == ''
+
+      halt_json_error 422, VALIDATION_FAILED_MESSAGE, month: 'Enter a valid month (YYYY-MM)' unless raw.is_a?(String) && ISO_MONTH.match?(raw)
+
+      raw
+    end
+
+    # Resolves the `date` query param per this file's shared contract: a
+    # missing/blank value defaults to today; a present-but-unparseable one
+    # halts with 422. Returns a Date.
+    def resolve_date_param(raw)
+      return Date.today if raw.nil? || raw == ''
+
+      parsed = parse_availability_date(raw)
+      halt_json_error 422, VALIDATION_FAILED_MESSAGE, date: 'Enter a valid date (YYYY-MM-DD)' if parsed.nil?
+
+      parsed
+    end
+
+    # The "HH:MM" slots a doctor's session settings produce: starting at
+    # `start_time`, stepping by `slot_length_minutes`, stopping before
+    # `end_time`, skipping any slot whose start falls inside
+    # `[break_start, break_end)`. `settings` may be nil (no row saved yet),
+    # in which case DEFAULT_SESSION_SETTINGS applies, same as
+    # `session_settings_json`.
+    #
+    # Exact and gap-free only because Task 4's PUT validation guarantees
+    # break_start is itself one of this same step sequence from start_time
+    # — this method does no realigning of its own.
+    def generate_slots(settings)
+      start_minutes = parse_time_of_day(settings&.start_time || DEFAULT_SESSION_SETTINGS[:start_time])
+      end_minutes = parse_time_of_day(settings&.end_time || DEFAULT_SESSION_SETTINGS[:end_time])
+      slot_length_minutes = settings&.slot_length_minutes || DEFAULT_SESSION_SETTINGS[:slot_length_minutes]
+      break_start_minutes = settings&.break_start ? parse_time_of_day(settings.break_start) : nil
+      break_end_minutes = settings&.break_end ? parse_time_of_day(settings.break_end) : nil
+
+      slots = []
+      minute = start_minutes
+      while minute < end_minutes
+        in_break = break_start_minutes && break_end_minutes &&
+                   minute >= break_start_minutes && minute < break_end_minutes
+        slots << format_time_of_day(minute) unless in_break
+        minute += slot_length_minutes
+      end
+      slots
+    end
+
+    # The "HH:MM" string for a minute-of-day (0-1439) — the inverse of
+    # `parse_time_of_day`.
+    def format_time_of_day(minutes)
+      format('%02d:%02d', minutes / 60, minutes % 60)
     end
   end
 end
