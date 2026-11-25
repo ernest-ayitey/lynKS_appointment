@@ -68,4 +68,18 @@ describe('LoginPage', () => {
 
     expect(await screen.findByText("This account can't sign in right now")).toBeInTheDocument();
   });
+
+  it('renders a generic banner when the request fails with something other than an ApiError', async () => {
+    // fetch rejecting (backend unreachable, offline) used to rethrow out of
+    // the submit handler, leaving the user with no feedback at all.
+    login.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText(/username/i), 'ernesta');
+    await user.type(screen.getByLabelText(/password/i), 'Sup3r!word');
+    await user.click(screen.getByRole('button', { name: /sign in/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/something went wrong/i);
+  });
 });

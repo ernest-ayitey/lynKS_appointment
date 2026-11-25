@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
 import { ApiError } from '../../lib/api-client';
+import { GENERIC_ERROR_MESSAGE } from '../../lib/api-error-handling';
 import { useAuth } from '../../lib/auth-context';
 
 interface LoginFormValues {
@@ -32,7 +33,10 @@ export default function LoginPage() {
         setFormError(err.message);
         return;
       }
-      throw err;
+      // Not an ApiError: the request never got a response (backend
+      // unreachable, offline, fetch rejected). Surface it rather than
+      // failing silently.
+      setFormError(GENERIC_ERROR_MESSAGE);
     }
   }
 

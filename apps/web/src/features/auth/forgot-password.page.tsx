@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
+import { GENERIC_ERROR_MESSAGE } from '../../lib/api-error-handling';
 import { useAuth } from '../../lib/auth-context';
 
 interface ForgotPasswordFormValues {
@@ -10,6 +11,7 @@ interface ForgotPasswordFormValues {
 export default function ForgotPasswordPage() {
   const { forgotPassword } = useAuth();
   const [message, setMessage] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -17,12 +19,24 @@ export default function ForgotPasswordPage() {
   } = useForm<ForgotPasswordFormValues>({ defaultValues: { username: '' } });
 
   async function onSubmit(data: ForgotPasswordFormValues) {
-    // The backend always responds with the same generic message regardless
-    // of whether the username matches an account — there is no "found" vs
-    // "not found" branch to render, by design (it must not leak which
-    // usernames exist).
-    const response = await forgotPassword(data.username);
-    setMessage(response.message);
+    setFormError(null);
+    try {
+      // The backend always responds with the same generic message regardless
+      // of whether the username matches an account — there is no "found" vs
+      // "not found" branch to render, by design (it must not leak which
+      // usernames exist).
+      const response = await forgotPassword(data.username);
+      setMessage(response.message);
+    } catch {
+      // The request itself can fail: Mailer.deliver runs inline in that
+      // backend request, and the API can be unreachable. There is no
+      // field-level case to distinguish (the only input is the username, and
+      // the backend deliberately never reports anything about it), so every
+      // failure gets the same generic banner. The error is deliberately not
+      // surfaced verbatim — a backend message here could leak whether the
+      // username exists.
+      setFormError(GENERIC_ERROR_MESSAGE);
+    }
   }
 
   return (
@@ -36,6 +50,12 @@ export default function ForgotPasswordPage() {
           </p>
         ) : (
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+            {formError && (
+              <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+                {formError}
+              </div>
+            )}
+
             <div>
               <label htmlFor="username" className="block text-sm font-medium text-slate-700">
                 Username
