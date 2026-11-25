@@ -1,4 +1,5 @@
 require 'json'
+require 'date'
 require_relative 'api_base'
 
 # Routes mounted at '/api/v1' for departments, doctors, and their
@@ -22,6 +23,16 @@ class DoctorRoutes < ApiRoutes
   }.freeze
 
   TIME_OF_DAY = /\A([01]\d|2[0-3]):([0-5]\d)\z/
+  ISO_DATE = /\A\d{4}-\d{2}-\d{2}\z/
+  ISO_MONTH = /\A\d{4}-(0[1-9]|1[0-2])\z/
+
+  # No Settings table exists yet to make this admin-configurable. Once one
+  # does, this should become `max_booking_window_days` read per-clinic
+  # instead of a hardcoded constant.
+  MAX_BOOKING_WINDOW_DAYS = 180
+
+  INVALID_DATES_MESSAGE = 'Enter valid dates (YYYY-MM-DD)'
+  DATES_TOO_FAR_MESSAGE = "Dates must be within #{MAX_BOOKING_WINDOW_DAYS} days from today".freeze
 
   # Scoped to this file's own paths rather than a blanket `before` so a
   # request for a path this file doesn't define (e.g. '/auth/does-not-exist',
@@ -40,8 +51,21 @@ class DoctorRoutes < ApiRoutes
   # `require_role!` reads `current_user.role`, which only exists once
   # `authenticate!` has populated it.
   before('/doctor/session-settings') { authenticate!; require_role!('doctor') }
+  before('/doctor/availability') { authenticate!; require_role!('doctor') }
 
   before('/doctor/session-settings') do
+    if request.body
+      request.body.rewind
+      parsed = JSON.parse(request.body.read)
+      @payload = parsed.is_a?(Hash) ? parsed : {}
+    else
+      @payload = {}
+    end
+  rescue JSON::ParserError
+    @payload = {}
+  end
+
+  before('/doctor/availability') do
     if request.body
       request.body.rewind
       parsed = JSON.parse(request.body.read)
@@ -153,6 +177,47 @@ class DoctorRoutes < ApiRoutes
     json(session_settings_json(settings))
   end
 
+  get '/doctor/availability' do
+    month = params['month']
+    halt_json_error 422, VALIDATION_FAILED_MESSAGE, month: 'Enter a valid month (YYYY-MM)' unless ISO_MONTH.match?(month.to_s)
+
+    json(days: available_dates_in_month(current_user, month))
+  end
+
+  put '/doctor/availability' do
+    set_dates = Array(@payload['set']).select { |d| d.is_a?(String) }
+    unset_dates = Array(@payload['unset']).select { |d| d.is_a?(String) }
+    all_dates = set_dates + unset_dates
+
+    parsed_by_date = {}
+    invalid_dates = []
+    all_dates.each do |date_string|
+      parsed = parse_availability_date(date_string)
+      parsed.nil? ? invalid_dates << date_string : parsed_by_date[date_string] = parsed
+    end
+
+    errors = {}
+    if invalid_dates.any?
+      errors[:dates] = INVALID_DATES_MESSAGE
+    else
+      max_date = Date.today + MAX_BOOKING_WINDOW_DAYS
+      errors[:dates] = DATES_TOO_FAR_MESSAGE if parsed_by_date.values.any? { |date| date > max_date }
+    end
+    halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
+
+    # `unset` wins when a date appears in both: write the deletions first,
+    # then only insert the `set` dates that weren't also unset.
+    DB.transaction do
+      unset_dates.each { |d| DoctorAvailabilityDay.where(user_id: current_user.id, date: parsed_by_date[d]).delete }
+      (set_dates - unset_dates).each { |d| DoctorAvailabilityDay.find_or_create(user_id: current_user.id, date: parsed_by_date[d]) }
+    end
+
+    months_touched = all_dates.map { |d| d[0, 7] }.uniq
+    days = months_touched.flat_map { |month| available_dates_in_month(current_user, month) }.uniq.sort
+
+    json(days: days)
+  end
+
   helpers do
     def session_settings_json(settings)
       return DEFAULT_SESSION_SETTINGS unless settings
@@ -177,6 +242,29 @@ class DoctorRoutes < ApiRoutes
       return nil unless match
 
       (match[1].to_i * 60) + match[2].to_i
+    end
+
+    # Returns the parsed Date, or nil for anything that isn't a well-formed
+    # "YYYY-MM-DD" string (including calendar-invalid values like
+    # 2027-02-30), so a malformed value becomes a 422 rather than reaching
+    # the database.
+    def parse_availability_date(value)
+      return nil unless value.is_a?(String) && ISO_DATE.match?(value)
+
+      Date.iso8601(value)
+    rescue ArgumentError
+      nil
+    end
+
+    # The sorted "YYYY-MM-DD" dates `user` has marked available within the
+    # given "YYYY-MM" month.
+    def available_dates_in_month(user, month)
+      year, month_number = month.split('-').map(&:to_i)
+      start_date = Date.new(year, month_number, 1)
+      end_date = Date.new(year, month_number, -1)
+
+      DoctorAvailabilityDay.where(user_id: user.id, date: start_date..end_date)
+                            .order(:date).select_map(:date).map(&:iso8601)
     end
   end
 end

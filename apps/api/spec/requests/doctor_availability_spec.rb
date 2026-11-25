@@ -1,0 +1,111 @@
+require_relative '../spec_helper'
+
+RSpec.describe 'GET/PUT /api/v1/doctor/availability' do
+  let!(:doctor) do
+    User.create(role: 'doctor', username: 'docA', email: 'doca@x.com',
+      first_name: 'Dana', last_name: 'Who', password: 'Sup3r!word')
+  end
+
+  let!(:patient) do
+    User.create(role: 'patient', username: 'ernesta', email: 'e@x.com',
+      first_name: 'A', last_name: 'B', password: 'Sup3r!word')
+  end
+
+  let!(:other_doctor) do
+    User.create(role: 'doctor', username: 'docB', email: 'docb@x.com',
+      first_name: 'Nour', last_name: 'Lo', password: 'Sup3r!word')
+  end
+
+  def get_availability(token, month)
+    get '/api/v1/doctor/availability', { month: month }, { 'HTTP_AUTHORIZATION' => "Bearer #{token}" }
+  end
+
+  def put_availability(token, body)
+    put '/api/v1/doctor/availability', body.to_json,
+        { 'HTTP_AUTHORIZATION' => "Bearer #{token}", 'CONTENT_TYPE' => 'application/json' }
+  end
+
+  describe 'GET' do
+    it 'returns only the available dates in the requested month' do
+      put_availability(TokenService.issue_access_token(doctor),
+                        { set: %w[2027-01-05 2027-01-20 2027-02-01] })
+
+      get_availability(TokenService.issue_access_token(doctor), '2027-01')
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)).to eq('days' => %w[2027-01-05 2027-01-20])
+    end
+
+    it 'rejects a patient role' do
+      get_availability(TokenService.issue_access_token(patient), '2027-01')
+      expect(last_response.status).to eq(403)
+    end
+
+    it 'only ever reflects the authenticated doctor, never another doctor' do
+      put_availability(TokenService.issue_access_token(doctor), { set: %w[2027-01-05] })
+      put_availability(TokenService.issue_access_token(other_doctor), { set: %w[2027-01-06] })
+
+      get_availability(TokenService.issue_access_token(doctor), '2027-01')
+      expect(JSON.parse(last_response.body)).to eq('days' => %w[2027-01-05])
+    end
+  end
+
+  describe 'PUT' do
+    it 'creates rows for set dates, reflected by a later GET for that month' do
+      put_availability(TokenService.issue_access_token(doctor), { set: %w[2027-03-10 2027-03-15] })
+      expect(last_response.status).to eq(200)
+
+      get_availability(TokenService.issue_access_token(doctor), '2027-03')
+      expect(JSON.parse(last_response.body)).to eq('days' => %w[2027-03-10 2027-03-15])
+    end
+
+    it 'removes previously-set dates named in unset' do
+      put_availability(TokenService.issue_access_token(doctor), { set: %w[2027-03-10 2027-03-15] })
+
+      put_availability(TokenService.issue_access_token(doctor), { unset: %w[2027-03-10] })
+      expect(last_response.status).to eq(200)
+
+      get_availability(TokenService.issue_access_token(doctor), '2027-03')
+      expect(JSON.parse(last_response.body)).to eq('days' => %w[2027-03-15])
+    end
+
+    it 'lets unset win when the same date appears in both set and unset' do
+      put_availability(TokenService.issue_access_token(doctor),
+                        { set: %w[2027-03-10], unset: %w[2027-03-10] })
+      expect(last_response.status).to eq(200)
+
+      get_availability(TokenService.issue_access_token(doctor), '2027-03')
+      expect(JSON.parse(last_response.body)).to eq('days' => [])
+    end
+
+    it 'rejects a date far outside the booking window, writing nothing' do
+      far_future = (Date.today + 181).iso8601
+
+      put_availability(TokenService.issue_access_token(doctor), { set: [far_future] })
+      expect(last_response.status).to eq(422)
+      expect(DoctorAvailabilityDay.where(user_id: doctor.id).count).to eq(0)
+    end
+
+    it 'rejects the whole request when one date is malformed, writing none of it' do
+      put_availability(TokenService.issue_access_token(doctor),
+                        { set: ['2027-03-10', 'not-a-date'] })
+      expect(last_response.status).to eq(422)
+      expect(DoctorAvailabilityDay.where(user_id: doctor.id).count).to eq(0)
+    end
+
+    it 'rejects a patient role' do
+      put_availability(TokenService.issue_access_token(patient), { set: %w[2027-03-10] })
+      expect(last_response.status).to eq(403)
+    end
+
+    it 'always scopes writes to current_user, ignoring any doctor id in the body' do
+      put_availability(
+        TokenService.issue_access_token(doctor),
+        { set: %w[2027-03-10], user_id: other_doctor.id }
+      )
+      expect(last_response.status).to eq(200)
+
+      expect(DoctorAvailabilityDay.where(user_id: other_doctor.id).count).to eq(0)
+      expect(DoctorAvailabilityDay.where(user_id: doctor.id).count).to eq(1)
+    end
+  end
+end
