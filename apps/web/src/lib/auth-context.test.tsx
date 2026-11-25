@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthProvider, useAuth } from './auth-context';
@@ -71,6 +72,50 @@ describe('AuthProvider', () => {
     await waitFor(() => expect(result.current.status).toBe('authenticated'));
     const data = await act(async () => result.current.authedFetch<{ ok: boolean }>('/some/protected/path'));
     expect(data.ok).toBe(true);
+  });
+
+  it('de-duplicates concurrent refreshes into a single /auth/refresh call', async () => {
+    sessionStorage.setItem('auth:user', JSON.stringify({ id: 1, username: 'a', role: 'patient', first_name: 'A', last_name: 'B', must_change_password: false }));
+    const fetchMock = mockFetchSequence([
+      { status: 200, body: { access_token: 'tok' } }, // boot refresh
+      { status: 401, body: { error: 'expired' } }, // call A, first attempt
+      { status: 401, body: { error: 'expired' } }, // call B, first attempt
+      { status: 200, body: { access_token: 'new-tok' } }, // the one shared refresh
+      { status: 200, body: { ok: true, who: 'a' } }, // call A, retried
+      { status: 200, body: { ok: true, who: 'b' } }, // call B, retried
+    ]);
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.status).toBe('authenticated'));
+
+    const [a, b] = await act(async () => Promise.all([
+      result.current.authedFetch<{ ok: boolean; who: string }>('/a'),
+      result.current.authedFetch<{ ok: boolean; who: string }>('/b'),
+    ]));
+
+    expect(a.who).toBe('a');
+    expect(b.who).toBe('b');
+    const refreshCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/auth/refresh'));
+    // One for boot, one for the shared retry-triggered refresh — never two
+    // for the two concurrent 401s.
+    expect(refreshCalls).toHaveLength(2);
+  });
+
+  it('does not spuriously lose a cached session when StrictMode double-invokes the boot effect', async () => {
+    sessionStorage.setItem('auth:user', JSON.stringify({ id: 1, username: 'a', role: 'patient', first_name: 'A', last_name: 'B', must_change_password: false }));
+    const fetchMock = mockFetchSequence([
+      { status: 200, body: { access_token: 'tok' } }, // boot refresh — must only be issued once
+    ]);
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }) => (
+        <StrictMode>
+          <AuthProvider>{children}</AuthProvider>
+        </StrictMode>
+      ),
+    });
+    await waitFor(() => expect(result.current.status).toBe('authenticated'));
+    expect(result.current.user?.username).toBe('a');
+    const refreshCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/auth/refresh'));
+    expect(refreshCalls).toHaveLength(1);
   });
 
   it('authedFetch does not loop forever when refresh itself 401s', async () => {

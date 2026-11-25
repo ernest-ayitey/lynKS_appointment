@@ -15,8 +15,8 @@ export interface AuthUser {
 
 interface SessionResponse {
   access_token: string;
-  must_change_password?: boolean;
-  user?: Omit<AuthUser, 'must_change_password'>;
+  must_change_password: boolean;
+  user: Omit<AuthUser, 'must_change_password'>;
 }
 
 interface RefreshResponse {
@@ -100,14 +100,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function applySession(response: SessionResponse) {
-    const mergedUser: AuthUser = {
-      ...(response.user as Omit<AuthUser, 'must_change_password'>),
-      must_change_password: response.must_change_password ?? false,
-    };
+    const mergedUser: AuthUser = { ...response.user, must_change_password: response.must_change_password };
     setAccessToken(response.access_token);
     setUser(mergedUser);
     cacheUser(mergedUser);
     setStatus('authenticated');
+  }
+
+  // Refresh tokens are single-use on the backend: two concurrent
+  // /auth/refresh calls would race its rotation and the loser gets a
+  // spurious 401. Every caller (boot effect, authedFetch's retry path)
+  // shares one in-flight refresh promise instead of each starting its
+  // own call; this also absorbs StrictMode's double-invoked boot effect,
+  // since the second invocation finds the ref already set.
+  const refreshPromiseRef = useRef<Promise<string> | null>(null);
+
+  function refreshAccessToken(): Promise<string> {
+    if (!refreshPromiseRef.current) {
+      refreshPromiseRef.current = apiRequest<RefreshResponse>('/auth/refresh', { method: 'POST' })
+        .then((response) => response.access_token)
+        .finally(() => {
+          refreshPromiseRef.current = null;
+        });
+    }
+    return refreshPromiseRef.current;
   }
 
   useEffect(() => {
@@ -119,7 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // including them. The cached profile hydrated at mount (set only
         // by login/register/reset/change) is the sole source of truth for
         // who's authenticated on boot.
-        const response = await apiRequest<RefreshResponse>('/auth/refresh', { method: 'POST' });
+        const token = await refreshAccessToken();
         if (cancelled) return;
         const cachedUser = readCachedUser();
         if (!cachedUser) {
@@ -130,7 +146,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           clearLocalSession();
           return;
         }
-        setAccessToken(response.access_token);
+        setAccessToken(token);
         setUser(cachedUser);
         setStatus('authenticated');
       } catch {
@@ -202,9 +218,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       if (err instanceof ApiError && err.status === 401 && path !== '/auth/refresh') {
         try {
-          const refreshed = await apiRequest<RefreshResponse>('/auth/refresh', { method: 'POST' });
-          setAccessToken(refreshed.access_token);
-          return await apiRequest<T>(path, { ...options, accessToken: refreshed.access_token });
+          const newToken = await refreshAccessToken();
+          setAccessToken(newToken);
+          return await apiRequest<T>(path, { ...options, accessToken: newToken });
         } catch (retryErr) {
           clearLocalSession();
           throw retryErr;
