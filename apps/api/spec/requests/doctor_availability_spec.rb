@@ -91,6 +91,33 @@ RSpec.describe 'GET/PUT /api/v1/doctor/availability' do
       expect(DoctorAvailabilityDay.where(user_id: doctor.id).count).to eq(0)
     end
 
+    it 'rejects a date in the past, writing nothing' do
+      put_availability(TokenService.issue_access_token(doctor), { set: %w[2019-01-05] })
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['errors']['dates']).to eq('Dates must not be in the past')
+      expect(DoctorAvailabilityDay.where(user_id: doctor.id).count).to eq(0)
+    end
+
+    it 'rejects yesterday, the first date outside the window' do
+      put_availability(TokenService.issue_access_token(doctor), { set: [(Date.today - 1).iso8601] })
+      expect(last_response.status).to eq(422)
+      expect(DoctorAvailabilityDay.where(user_id: doctor.id).count).to eq(0)
+    end
+
+    it 'accepts today, the lower boundary of the booking window' do
+      today = Date.today.iso8601
+
+      put_availability(TokenService.issue_access_token(doctor), { set: [today] })
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['days']).to include(today)
+    end
+
+    it 'rejects the whole request when one date is valid but in the past, writing none of it' do
+      put_availability(TokenService.issue_access_token(doctor), { set: ['2027-03-10', '2019-01-05'] })
+      expect(last_response.status).to eq(422)
+      expect(DoctorAvailabilityDay.where(user_id: doctor.id).count).to eq(0)
+    end
+
     it 'accepts a date exactly at the booking window boundary (today + 180 days)' do
       at_boundary = (Date.today + 180).iso8601
 

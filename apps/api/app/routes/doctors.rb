@@ -36,6 +36,7 @@ class DoctorRoutes < ApiRoutes
 
   INVALID_DATES_MESSAGE = 'Enter valid dates (YYYY-MM-DD)'
   DATES_TOO_FAR_MESSAGE = "Dates must be within #{MAX_BOOKING_WINDOW_DAYS} days from today".freeze
+  DATES_IN_PAST_MESSAGE = 'Dates must not be in the past'
 
   # Scoped to this file's own paths rather than a blanket `before` so a
   # request for a path this file doesn't define (e.g. '/auth/does-not-exist',
@@ -232,12 +233,23 @@ class DoctorRoutes < ApiRoutes
       parsed.nil? ? invalid_dates << date_string : parsed_by_date[date_string] = parsed
     end
 
+    # Every date must sit inside the bookable window — [today, today + 180]
+    # — on both ends. Only the upper bound existed before, so a client bug
+    # (or a hand-rolled request) could write availability for a date years
+    # in the past, which no patient can ever book. All-or-nothing, same as
+    # the malformed-date case: one bad date rejects the whole request.
     errors = {}
     if invalid_dates.any?
       errors[:dates] = INVALID_DATES_MESSAGE
     else
-      max_date = Date.today + MAX_BOOKING_WINDOW_DAYS
-      errors[:dates] = DATES_TOO_FAR_MESSAGE if parsed_by_date.values.any? { |date| date > max_date }
+      today = Date.today
+      max_date = today + MAX_BOOKING_WINDOW_DAYS
+      dates = parsed_by_date.values
+      if dates.any? { |date| date < today }
+        errors[:dates] = DATES_IN_PAST_MESSAGE
+      elsif dates.any? { |date| date > max_date }
+        errors[:dates] = DATES_TOO_FAR_MESSAGE
+      end
     end
     halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
 
