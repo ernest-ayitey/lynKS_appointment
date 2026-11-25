@@ -465,8 +465,11 @@ describe('AuthProvider', () => {
   });
 
   it('logout clears state even if the server call fails', async () => {
+    // Realistic same-tab case: a prior login already cached the user;
+    // /auth/refresh on boot only ever returns {access_token}, never user.
+    sessionStorage.setItem('auth:user', JSON.stringify({ id: 1, username: 'a', role: 'patient', first_name: 'A', last_name: 'B', must_change_password: false }));
     mockFetchSequence([
-      { status: 200, body: { access_token: 'tok', must_change_password: false, user: { id: 1, username: 'a', role: 'patient', first_name: 'A', last_name: 'B' } } }, // boot refresh succeeds
+      { status: 200, body: { access_token: 'tok' } }, // boot refresh succeeds
     ]);
     const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.status).not.toBe('loading'));
@@ -477,8 +480,9 @@ describe('AuthProvider', () => {
   });
 
   it('authedFetch retries once on 401 via refresh, then succeeds', async () => {
+    sessionStorage.setItem('auth:user', JSON.stringify({ id: 1, username: 'a', role: 'patient', first_name: 'A', last_name: 'B', must_change_password: false }));
     mockFetchSequence([
-      { status: 200, body: { access_token: 'tok', must_change_password: false, user: { id: 1, username: 'a', role: 'patient', first_name: 'A', last_name: 'B' } } }, // boot refresh
+      { status: 200, body: { access_token: 'tok' } }, // boot refresh
       { status: 401, body: { error: 'expired' } }, // the authedFetch call, first attempt
       { status: 200, body: { access_token: 'new-tok' } }, // the refresh it triggers
       { status: 200, body: { ok: true } }, // the retried call
@@ -490,8 +494,9 @@ describe('AuthProvider', () => {
   });
 
   it('authedFetch does not loop forever when refresh itself 401s', async () => {
+    sessionStorage.setItem('auth:user', JSON.stringify({ id: 1, username: 'a', role: 'patient', first_name: 'A', last_name: 'B', must_change_password: false }));
     mockFetchSequence([
-      { status: 200, body: { access_token: 'tok', must_change_password: false, user: { id: 1, username: 'a', role: 'patient', first_name: 'A', last_name: 'B' } } },
+      { status: 200, body: { access_token: 'tok' } },
       { status: 401, body: { error: 'expired' } },
       { status: 401, body: { error: 'refresh also expired' } },
     ]);
@@ -513,11 +518,18 @@ State: `accessToken: string | null` (never persisted), `user: AuthUser |
 null` (hydrated from `sessionStorage.getItem('auth:user')` as the
 `useState` initializer, parsed JSON or `null`), `status`. On mount
 (`useEffect`, once): call `apiRequest('/auth/refresh', { method: 'POST'
-})`; on success, **only if a cached `user` was hydrated**, set
-`accessToken` from the response and `status = 'authenticated'`; if the
-call succeeds but there is no cached `user` (the fail-closed case this
-plan's Global Constraints section requires), treat it the same as a
-failed refresh — do not set `accessToken`, leave `user` null,
+})`; on success, **only if a cached `user` was hydrated from
+`sessionStorage`**, set `accessToken` from the response and
+`status = 'authenticated'` — **never read `user` or
+`must_change_password` off the refresh response body itself, even if
+some future backend change started including them**; the whole point of
+this gate is that the cached profile (set only by login/register/reset/
+change, each of which really does return a full session) is the sole
+source of truth for who's authenticated on boot, so there's nothing to
+destructure from the refresh response but `access_token`. If the call
+succeeds but there is no cached `user` (the fail-closed case this plan's
+Global Constraints section requires), treat it the same as a failed
+refresh — do not set `accessToken`, leave `user` null,
 `status = 'unauthenticated'` (do not bother calling `/auth/logout` here,
 there is no access token to send and nothing local to clear). On
 failure (`ApiError`), clear `accessToken`, `user`,
