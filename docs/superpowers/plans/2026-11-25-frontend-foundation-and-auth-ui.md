@@ -861,7 +861,14 @@ Reads `user` from `useAuth()`, renders "Signed in as {role}: {first_name}
 
 - [ ] **Step 5: Rewrite `src/App.tsx`**
 
-Wraps `<AuthProvider>` around a `<BrowserRouter>` with `<Routes>`:
+Wraps a `<QueryClientProvider client={queryClient}>` (a module-level
+`new QueryClient()`) around `<AuthProvider>` around a `<BrowserRouter>`
+with `<Routes>` — Task 5's `RegisterPage` uses `@tanstack/react-query`'s
+`useQuery` for the live username-availability check, so it needs a
+`QueryClientProvider` ancestor anywhere it's actually mounted; this is
+the first and only place in this plan that mounts it for real (Task 5's
+own tests supply their own isolated `QueryClientProvider` directly, so
+this is a separate requirement, not already covered). Routes:
 `/login` → `LoginPage`, `/register` → `RegisterPage`, `/forgot-password`
 → `ForgotPasswordPage`, `/reset-password/:token` → `ResetPasswordPage`,
 `/change-password` → `<ProtectedRoute><ChangePasswordPage /></ProtectedRoute>`,
