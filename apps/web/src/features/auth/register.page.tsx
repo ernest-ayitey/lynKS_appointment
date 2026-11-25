@@ -82,10 +82,15 @@ export default function RegisterPage() {
     return () => clearTimeout(timeout);
   }, [username]);
 
-  const { data: usernameAvailable, isFetching: checkingUsername } = useQuery({
+  const {
+    data: usernameAvailable,
+    isFetching: checkingUsername,
+    isError: usernameCheckErrored,
+  } = useQuery({
     queryKey: ['username-availability', debouncedUsername],
     queryFn: () => checkUsernameAvailability(debouncedUsername),
     enabled: debouncedUsername.length >= 4,
+    retry: false,
   });
 
   async function onSubmit(data: RegisterFormValues) {
@@ -242,9 +247,11 @@ export default function RegisterPage() {
                 <p className="mt-1 text-sm text-slate-500">
                   {checkingUsername
                     ? 'Checking availability…'
-                    : usernameAvailable
-                      ? 'Username is available'
-                      : 'Username is taken'}
+                    : usernameCheckErrored
+                      ? "Can't check availability right now"
+                      : usernameAvailable
+                        ? 'Username is available'
+                        : 'Username is taken'}
                 </p>
               )
             )}

@@ -86,6 +86,20 @@ describe('RegisterPage', () => {
     expect(await screen.findByText(/username is taken/i)).toBeInTheDocument();
   });
 
+  it('renders a neutral "not checkable" message, not "taken", when the availability check 422s', async () => {
+    checkUsernameAvailability.mockRejectedValue(
+      new ApiError('Invalid username format', 422, { username: 'Invalid username format' }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText(/^username/i), 'er ne');
+
+    expect(await screen.findByText(/can't check availability right now/i)).toBeInTheDocument();
+    expect(screen.queryByText(/username is taken/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/username is available/i)).not.toBeInTheDocument();
+  });
+
   it('shows the submit-time 422 field error even though the live check said "available"', async () => {
     checkUsernameAvailability.mockResolvedValue(true);
     register.mockRejectedValueOnce(
