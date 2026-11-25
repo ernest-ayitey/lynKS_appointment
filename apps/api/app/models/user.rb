@@ -3,6 +3,8 @@ require 'bcrypt'
 class User < Sequel::Model(:users)
   plugin :timestamps, update_on_create: true
 
+  one_to_one :doctor_profile
+
   ROLES = %w[patient doctor records admin].freeze
   STATUSES = %w[active invited locked deactivated].freeze
 

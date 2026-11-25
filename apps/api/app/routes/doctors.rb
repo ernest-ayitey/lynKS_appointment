@@ -19,12 +19,29 @@ class DoctorRoutes < ApiRoutes
   # it still needs at least a valid session, same as a blanket filter would
   # enforce, without that side effect.
   before('/departments') { authenticate! }
+  before('/doctors') { authenticate! }
 
-  # doctor_count is 0 until Task 3 adds the `doctor_profiles` table and
-  # Department#doctor_profiles_dataset association; swap the hardcoded 0 for
-  # `d.doctor_profiles_dataset.count` then — a one-line change, not a
-  # redesign.
   get '/departments' do
-    json(Department.all.map { |d| { id: d.id, name: d.name, doctor_count: 0 } })
+    json(Department.all.map { |d| { id: d.id, name: d.name, doctor_count: d.doctor_profiles_dataset.count } })
+  end
+
+  # Only doctors whose account is active are patient-facing: account
+  # lockout after 5 failed logins is already live in the merged backend, so
+  # a locked (or otherwise blocked) doctor must not appear here. The same
+  # filter belongs on every other patient-facing doctor listing too.
+  get '/doctors' do
+    active_doctor_ids = User.where(role: 'doctor', status: 'active').select_map(:id)
+    profiles = DoctorProfile.eager(:department, :user).where(user_id: active_doctor_ids)
+    profiles = profiles.where(department_id: params['department_id']) if params['department_id']
+
+    json(profiles.all.map do |profile|
+      {
+        id: profile.user.id,
+        first_name: profile.user.first_name,
+        last_name: profile.user.last_name,
+        department: { id: profile.department.id, name: profile.department.name },
+        specialty_title: profile.specialty_title
+      }
+    end)
   end
 end
