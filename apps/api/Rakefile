@@ -5,4 +5,9 @@ namespace :db do
   task :migrate do
     Sequel::Migrator.run(DB, 'db/migrate')
   end
+
+  desc 'Seed the database with demo departments and doctors'
+  task :seed do
+    require_relative 'db/seeds'
+  end
 end
