@@ -1,0 +1,4 @@
+require_relative 'config/environment'
+require_relative 'app/api'
+
+run App

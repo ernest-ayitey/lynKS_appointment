@@ -1,0 +1,8 @@
+require_relative 'config/environment'
+
+namespace :db do
+  desc 'Run pending migrations'
+  task :migrate do
+    Sequel::Migrator.run(DB, 'db/migrate')
+  end
+end

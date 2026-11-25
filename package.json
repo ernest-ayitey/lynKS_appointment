@@ -1,0 +1,15 @@
+{
+  "name": "lynks-appointment",
+  "private": true,
+  "version": "0.0.0",
+  "comment": "apps/api is a Ruby (Sinatra + Sequel) app with no package.json, so it is not an npm workspace and its scripts shell out to bundler.",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "test:api": "cd apps/api && bundle exec rspec",
+    "test:web": "npm run test --workspace apps/web",
+    "dev:api": "cd apps/api && bundle exec rackup --port 3000",
+    "dev:web": "npm run dev --workspace apps/web"
+  }
+}
