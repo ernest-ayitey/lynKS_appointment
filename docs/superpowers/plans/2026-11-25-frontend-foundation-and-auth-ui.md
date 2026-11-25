@@ -94,10 +94,22 @@ TypeScript types.
   `FRONTEND_URL=http://localhost:5173` already set in `apps/api/.env`.
 - `/auth/refresh`'s response has no `user`/`must_change_password` (a
   known, already-flagged gap in the merged backend — no `/me` endpoint
-  exists yet). This plan's call: treat the cached `sessionStorage` profile
-  as display-only and good enough until a future plan adds `/me`; a
-  stale cached role only affects which UI shell renders, never what the
-  backend will actually authorize.
+  exists yet), **and the backend's `authenticate!` never checks
+  `must_change_password` on any route either** — it is enforced nowhere
+  server-side. That makes the frontend's forced-change gate the *only*
+  thing enforcing it, so it must fail closed: if `/auth/refresh` succeeds
+  but there is no cached `user` (a fresh tab, a different browser, or a
+  cleared `sessionStorage` with a still-valid "remember me" cookie), the
+  frontend cannot tell whether that account owes a password change —
+  silently rendering the authenticated app in that state (the earlier
+  draft of this plan did exactly this) is a real bypass, not a cosmetic
+  gap. This plan's call: on that specific case (refresh succeeds, no
+  cached user), treat the session as `unauthenticated` and require a
+  fresh login rather than guess. A normal same-tab session always has a
+  cached `user` (set at login/register/reset/change time), so this only
+  costs an extra login in the cross-tab/cold-restart case — acceptable
+  until a future plan adds `/me` and this gate can check the real flag
+  every time.
 
 ## Review Focus
 
@@ -108,10 +120,14 @@ TypeScript types.
 - **Infinite refresh loop** — a 401 on `/auth/refresh` itself, or two
   back-to-back 401s on the same retried request, must fail cleanly rather
   than retry forever. Covered in Task 3.
-- **`must_change_password` redirect bypassed by a direct URL** — typing
-  `/` or any other protected path directly, not just clicking a nav link,
-  must still land on `/change-password` until it's cleared. Covered in
-  Task 8.
+- **`must_change_password` redirect bypassed** — either by typing `/` or
+  any other protected path directly rather than clicking a nav link
+  (covered in Task 8's `ProtectedRoute`), or by a cross-tab/cold-restart
+  session that refreshes successfully but has no cached user profile to
+  check the flag against — since the backend never enforces this flag
+  itself, the frontend must fail closed to `unauthenticated` in that
+  case rather than silently render the app with an unknown
+  `must_change_password` state (covered in Task 3).
 - **Stale "username available" result at submit time** — the live
   availability check and the register endpoint's own 422 on a
   since-taken username are two different checks; the second must still
@@ -133,8 +149,6 @@ apps/web/
   tsconfig.app.json
   tsconfig.node.json
   vite.config.ts
-  tailwind.config.ts
-  postcss.config.js
   index.html
   .env.example
   src/
@@ -177,8 +191,7 @@ apps/web/
   `vite.config.ts`, `index.html`, `.env.example`)
 - Create: `apps/web/package.json`, `apps/web/vite.config.ts`,
   `apps/web/tsconfig.json`, `apps/web/tsconfig.app.json`,
-  `apps/web/tsconfig.node.json`, `apps/web/tailwind.config.ts`,
-  `apps/web/postcss.config.js`, `apps/web/index.html`,
+  `apps/web/tsconfig.node.json`, `apps/web/index.html`,
   `apps/web/.env.example`
 - Create: `apps/web/src/main.tsx`, `apps/web/src/App.tsx`,
   `apps/web/src/index.css`, `apps/web/src/vite-env.d.ts`,
@@ -202,8 +215,14 @@ Dependencies: `react`, `react-dom`, `react-router-dom`,
 `@tanstack/react-query`, `react-hook-form`. Dev dependencies: `vite`,
 `@vitejs/plugin-react`, `typescript`, `vitest`, `@testing-library/react`,
 `@testing-library/jest-dom`, `@testing-library/user-event`, `jsdom`,
-`tailwindcss`, `postcss`, `autoprefixer`, `@types/react`,
-`@types/react-dom`.
+`tailwindcss`, `@tailwindcss/vite`, `@types/react`, `@types/react-dom`.
+The installed Tailwind major version is 4+ (confirmed in this
+environment), which replaced the v3 `tailwind.config.js` +
+`postcss.config.js` + `autoprefixer` model with a CSS-first one — no
+config file, no separate PostCSS setup, no `autoprefixer` (built in).
+Use the current model, not the v3 one: `@tailwindcss/vite`'s Vite plugin
+and a single `@import "tailwindcss";` line in `index.css`, as Step 3/4
+below specify.
 
 - [ ] **Step 2: `npm install`**
 
@@ -212,14 +231,16 @@ Expected: no errors, `node_modules` populated.
 
 - [ ] **Step 3: Write `vite.config.ts`**
 
-Port `5173`; `server.proxy['/api'] = { target: 'http://localhost:3000',
-changeOrigin: true }`; `test.environment = 'jsdom'`,
-`test.setupFiles = ['./src/test/setup.ts']`.
+Port `5173`; plugins: `react()` and `tailwindcss()` (from
+`@tailwindcss/vite`); `server.proxy['/api'] = { target:
+'http://localhost:3000', changeOrigin: true }`;
+`test.environment = 'jsdom'`, `test.setupFiles = ['./src/test/setup.ts']`.
 
-- [ ] **Step 4: Write `tailwind.config.ts`, `postcss.config.js`, `src/index.css`**
+- [ ] **Step 4: Write `src/index.css`**
 
-Standard Tailwind v4-or-current setup scanning `index.html` and
-`src/**/*.{ts,tsx}`; `index.css` has the three `@tailwind` directives.
+One line: `@import "tailwindcss";` — no `tailwind.config.*`, no
+`postcss.config.*`, no `autoprefixer`; the Vite plugin from Step 3
+handles all of it.
 
 - [ ] **Step 5: Write `tsconfig.json`/`tsconfig.app.json`/`tsconfig.node.json`**
 
@@ -422,6 +443,15 @@ describe('AuthProvider', () => {
     await waitFor(() => expect(result.current.status).toBe('unauthenticated'));
   });
 
+  it('fails closed to unauthenticated when refresh succeeds but no user is cached (cross-tab/cold-restart case)', async () => {
+    // sessionStorage is empty (no prior login in this tab), yet the
+    // refresh cookie is still valid server-side.
+    mockFetchSequence([{ status: 200, body: { access_token: 'tok' } }]);
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.status).toBe('unauthenticated'));
+    expect(result.current.user).toBeNull();
+  });
+
   it('login stores the user and marks authenticated', async () => {
     mockFetchSequence([
       { status: 401, body: { error: 'x' } }, // boot refresh fails
@@ -483,10 +513,15 @@ State: `accessToken: string | null` (never persisted), `user: AuthUser |
 null` (hydrated from `sessionStorage.getItem('auth:user')` as the
 `useState` initializer, parsed JSON or `null`), `status`. On mount
 (`useEffect`, once): call `apiRequest('/auth/refresh', { method: 'POST'
-})`; on success, set `accessToken` from the response and
-`status = 'authenticated'` (keep whatever cached `user` was hydrated,
-per this plan's documented limitation); on failure (`ApiError`), clear
-`accessToken`, `user`, `sessionStorage.removeItem('auth:user')`, set
+})`; on success, **only if a cached `user` was hydrated**, set
+`accessToken` from the response and `status = 'authenticated'`; if the
+call succeeds but there is no cached `user` (the fail-closed case this
+plan's Global Constraints section requires), treat it the same as a
+failed refresh — do not set `accessToken`, leave `user` null,
+`status = 'unauthenticated'` (do not bother calling `/auth/logout` here,
+there is no access token to send and nothing local to clear). On
+failure (`ApiError`), clear `accessToken`, `user`,
+`sessionStorage.removeItem('auth:user')`, set
 `status = 'unauthenticated'`. `login`/`register`/`resetPassword`/
 `changePassword` all follow the same pattern: call the matching
 endpoint, on success `setAccessToken(response.access_token)`,
@@ -622,10 +657,18 @@ thrown `ApiError`; the page treats that as "not checkable yet", not
 - [ ] **Step 4: Implement `RegisterPage`**
 
 React Hook Form with all required fields matching the screen spec
-(first/last name, DOB, gender select, email, phone, username, password +
+(first/last name, gender select, email, phone, username, password +
 confirm with a simple strength indicator — reuse the same three
 conditions the backend checks: length≥8, has a digit, has a symbol — and
-accept-terms checkbox). Username field drives a debounced (e.g. 400ms)
+accept-terms checkbox). Date of birth: use a native `<input
+type="date">`, not a free-text field — the screen spec's "DD/MM/YYYY
+text" describes the display, but a native date input already emits
+`YYYY-MM-DD` in its value regardless of the user's locale, which is
+exactly the ISO-8601 string the backend's `Date.iso8601` parser requires
+(`apps/api/app/routes/auth.rb`'s `parse_date`) — so the payload's
+`date_of_birth` field needs no conversion at all, just pass the input's
+value straight through. This plan's call: correctness and zero parsing
+code beat matching the mockup's exact text-field appearance. Username field drives a debounced (e.g. 400ms)
 `useQuery(['username-availability', username], () =>
 checkUsernameAvailability(username), { enabled: username.length >= 4 })`
 showing an inline "available"/"taken" hint — purely informational, never
