@@ -289,7 +289,11 @@ git commit -m "feat: add departments table and GET /departments"
   go `user.doctor_profile.department`). `GET /doctors?department_id=`
   (optional filter) → 200 `[{id, first_name, last_name, department:
   {id, name}, specialty_title}]` — only rows where `user.role ==
-  'doctor'`.
+  'doctor'` **and `user.status == 'active'`** — account lockout after 5
+  failed logins is already live in the merged backend (not a future-plan
+  concern), so a locked doctor must not appear in any patient-facing
+  doctor list. This same filter belongs on Task 6's public endpoints
+  too, not just this one — carry it through.
 
 - [ ] **Step 1: Write the migration**
 
@@ -400,6 +404,13 @@ clinic deployment" constraint); no timezone math needed.
   `end_time - start_time` (minus any break) → 422 (this is the Review
   Focus item — pick a clear error message, e.g. "Slot length must
   evenly divide the session window").
+- PUT with a break set but `(break_start - start_time) % slot_length_minutes
+  != 0` → 422 ("Break must align with a slot boundary"). This second
+  divisibility check exists specifically so Task 6's slot generator
+  (which steps a dense grid from `start_time` and skips anything inside
+  `[break_start, break_end)`) can never produce a short/misaligned slot
+  at the break boundary — the two tasks' math only agrees if this is
+  enforced here, not just the total-window divisibility check above.
 - A `patient` role GET/PUT → 403 (via `require_role!`).
 - No doctor id in the request body ever changes whose settings are
   touched — the test should attempt to pass one and confirm it's
@@ -464,7 +475,11 @@ Sequel.migration do
 end
 ```
 
-A unique index on `(user_id, date)` is the natural key — this table only
+If a date appears in both `set` and `unset` in the same request,
+`unset` wins (the date ends up not-available) — when a client sends a
+self-contradictory request, the safer outcome is "don't show it as
+bookable," not "show it as bookable." A unique index on `(user_id,
+date)` is the natural key — this table only
 ever holds "available" rows in practice (per the design spec's "one row
 per date a doctor has explicitly set"); this plan's call: only insert a
 row when a day is set *available*, and `unset` means deleting the row
@@ -527,7 +542,10 @@ git commit -m "feat: add doctor availability days with bounded set/unset"
   /doctors/:id/slots?date=YYYY-MM-DD` → 200 `{slots: ["09:00", "09:20",
   ...]}` generated from that doctor's session settings for the given
   date — every slot the settings produce, per this plan's documented
-  scope limit (no booked-slot filtering yet).
+  scope limit (no booked-slot filtering yet). Query param contract
+  (applies to this task's two endpoints and Task 4/5's `?month=` too):
+  a missing `month`/`date` defaults to the current month/today; a
+  present-but-unparseable value (`month=foo`, `date=not-a-date`) → 422.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -541,6 +559,10 @@ git commit -m "feat: add doctor availability days with bounded set/unset"
   spacing (e.g. 09:00–17:00, 20-minute slots, no break → 24 slots;
   verify the exact math with one concrete worked example in the test).
 - An unknown doctor id → 404.
+- A `locked` or `deactivated` doctor id → 404 (not just filtered out of
+  the list — treat them as not found here too, same as an unknown id,
+  so a patient who already has the id from somewhere can't route around
+  the list filter).
 - A `patient` role caller succeeds (no role restriction on this path).
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -549,10 +571,15 @@ git commit -m "feat: add doctor availability days with bounded set/unset"
 
 Slot generation: starting at `start_time`, stepping by
 `slot_length_minutes`, stopping before `end_time`, skipping any slot
-that falls inside `[break_start, break_end)` when both are set. Pure
-function, easy to unit-test directly if you prefer a model/service
-method over inlining it in the route — your call, but keep the route
-body thin either way.
+that falls inside `[break_start, break_end)` when both are set. This is
+only correct because Task 4 now rejects any `break_start` that isn't
+itself a multiple of `slot_length_minutes` from `start_time` — the two
+tasks' math is linked by that validation rule, not coincidentally
+compatible; if you're implementing this task and that rule isn't
+actually in Task 4's code yet, that's a blocking gap, not something to
+route around here. Pure function, easy to unit-test directly if you
+prefer a model/service method over inlining it in the route — your
+call, but keep the route body thin either way.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -656,17 +683,32 @@ role-gated page while owing a password change either).
 
 - [ ] **Step 4: Write the failing tests for `DoctorAvailability`**
 
-Mock `useAuth` and `doctor.api`'s calls. Render the page: a month
-calendar (reuse plain `Date` math, no new date library — this repo has
-none and the math needed is simple month/day arithmetic), clicking a day
-toggles it into a local "pending changes" set, "Save availability"
-calls the `PUT` endpoint with the accumulated `set`/`unset` arrays and,
-on success, re-fetches (or optimistically updates) the displayed month.
-A simple session-settings form (start/end time, slot length) with its
-own save action calling the settings `PUT`. Test the save payload shape
-matches the backend contract exactly (`{set: [...], unset: [...]}` /
-whatever Task 5 settled on — read the actual merged backend route to
-confirm, don't guess from this plan's prose alone).
+Mock `useAuth` and `doctor.api`'s calls. Render the page covering BOTH
+screen-spec interactions, not just the calendar — the screen spec's
+primary bullet for this screen is the weekly-repeat chips, and the
+backend contract (Task 4) includes `max_patients_per_day`/`break_start`/
+`break_end`, so both are in scope here, not a later plan's job:
+
+- A month calendar (reuse plain `Date` math, no new date library — this
+  repo has none and the math needed is simple month/day arithmetic);
+  clicking a day toggles it into a local "pending changes" set.
+- Seven weekday chips ("Mon" through "Sun"); clicking one computes every
+  date matching that weekday in the currently-displayed month and adds
+  them all to the pending `set` (this is purely a client-side
+  convenience over the same `set`/`unset` arrays — no new backend
+  endpoint, per the design spec's "weekly-repeat is a write-time
+  convenience, not a stored rule").
+- "Save availability" calls the `PUT` endpoint with the accumulated
+  `set`/`unset` arrays and, on success, re-fetches (or optimistically
+  updates) the displayed month. Test the save payload shape matches the
+  backend contract exactly — read the actual merged backend route to
+  confirm, don't guess from this plan's prose alone.
+- A session-settings form with ALL the fields Task 4's backend accepts:
+  start time, end time, slot length, max patients/day, break start,
+  break end — its own save action calling the settings `PUT`, and its
+  own 422 handling (reuse `applyApiError`) for the validation rules
+  Task 4 enforces (end-before-start, non-divisible slot length, break
+  not aligned to a slot boundary).
 
 - [ ] **Step 5: Run tests to verify they fail**
 
@@ -723,10 +765,14 @@ git commit -m "feat: link doctors to their availability page from the landing st
 
 **Spec coverage:** the design spec's Doctor-section API surface items
 for availability/session-settings/department/doctor lookup are all
-covered; the `DoctorAvailability` screen (desktop) is built — its mobile
-variant (`MDoctorAvailability`) is explicitly a later-plan responsive
-concern per the frontend plan's "same route, Tailwind breakpoints"
-decision, not a separate task here.
+covered; the `DoctorAvailability` screen (desktop) is built INCLUDING
+the weekly-repeat chips and the full session-settings field set (a
+builder-check caught an earlier draft of this plan that silently
+dropped both while still claiming full coverage — fixed before
+dispatch, Task 8 now explicitly covers them). Its mobile variant
+(`MDoctorAvailability`) is explicitly a later-plan responsive concern
+per the frontend plan's "same route, Tailwind breakpoints" decision,
+not a separate task here.
 
 **Dependency ordering:** Task 1 (role-gating) before Tasks 4/5 (which
 need it); Tasks 2→3 (departments before doctor profiles, since profiles
