@@ -10,7 +10,7 @@ vi.mock('./auth-context', () => ({
 }));
 
 function renderAt(initialPath: string) {
-  render(
+  return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
         <Route path="/login" element={<div>Login page</div>} />
@@ -39,6 +39,40 @@ describe('ProtectedRoute', () => {
     renderAt('/');
 
     expect(screen.getByText('Change password page')).toBeInTheDocument();
+  });
+
+  it('renders nothing at all while the session is still loading', () => {
+    useAuth.mockReturnValue({ status: 'loading', user: null });
+
+    const { container } = renderAt('/');
+
+    // Neither the children nor a redirect: the boot refresh has not settled,
+    // so there is nothing to decide yet.
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText('Protected content')).not.toBeInTheDocument();
+    expect(screen.queryByText('Login page')).not.toBeInTheDocument();
+  });
+
+  it('fails closed to /login when authenticated with a null user', () => {
+    // Unreachable by construction today, but this is the gate every protected
+    // page wraps in: an ambiguous state must never render the app.
+    useAuth.mockReturnValue({ status: 'authenticated', user: null });
+
+    renderAt('/');
+
+    expect(screen.getByText('Login page')).toBeInTheDocument();
+    expect(screen.queryByText('Protected content')).not.toBeInTheDocument();
+  });
+
+  it('renders children for an authenticated user who does not need a password change', () => {
+    useAuth.mockReturnValue({
+      status: 'authenticated',
+      user: { must_change_password: false },
+    });
+
+    renderAt('/');
+
+    expect(screen.getByText('Protected content')).toBeInTheDocument();
   });
 
   it('renders children at /change-password without looping when a password change is required', () => {
