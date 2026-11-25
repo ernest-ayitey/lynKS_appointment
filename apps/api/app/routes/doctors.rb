@@ -12,6 +12,7 @@ class DoctorRoutes < ApiRoutes
 
   SLOT_LENGTH_MESSAGE = 'Slot length must evenly divide the session window'
   BREAK_ALIGNMENT_MESSAGE = 'Break must align with a slot boundary'
+  BREAK_LENGTH_MESSAGE = 'Break length must be a whole number of slots'
 
   DEFAULT_SESSION_SETTINGS = {
     start_time: '09:00',
@@ -155,19 +156,36 @@ class DoctorRoutes < ApiRoutes
     end
     halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
 
-    # The session window, net of any break, is what slot_length_minutes must
-    # evenly divide. If a break is set, its start must also land on one of
-    # the slot boundaries stepped from start_time — otherwise Task 6's slot
-    # generator (which steps that same grid and skips [break_start,
-    # break_end)) could produce a slot that's only partially inside the
-    # break.
-    window = end_minutes - start_minutes
-    window -= (break_end_minutes - break_start_minutes) if break_start_minutes && break_end_minutes
+    # Both break edges must land on the slot grid stepped from start_time:
+    # a misaligned `break_start` would make `generate_slots` emit a slot only
+    # partially inside the break, and a break whose *duration* isn't a whole
+    # number of slots shifts every post-break boundary off the grid — which
+    # is what lets the net window below divide evenly while the final slot
+    # still runs past `end_time`. (Counterexample the duration check exists
+    # to reject: 08:00-12:10, 30-minute slots, break 10:00-10:10 — net window
+    # 240 divides by 30, yet the last slot would start at 12:00 and end at
+    # 12:30.)
+    #
+    # Checked *before* the window-divisibility rule below so a break-shaped
+    # mistake reports against the break rather than being misattributed to
+    # slot_length_minutes. Once both pass, break duration is a multiple of
+    # slot_length_minutes, so the net window divides evenly if and only if
+    # `end_time - start_time` does — which is exactly the condition that
+    # makes `generate_slots`' last slot end at `end_time` rather than past it.
+    if break_start_minutes && break_end_minutes
+      if (break_start_minutes - start_minutes) % slot_length_minutes != 0
+        errors[:break_start] = BREAK_ALIGNMENT_MESSAGE
+      end
+      if (break_end_minutes - break_start_minutes) % slot_length_minutes != 0
+        errors[:break_end] = BREAK_LENGTH_MESSAGE
+      end
+    end
 
-    errors[:slot_length_minutes] = SLOT_LENGTH_MESSAGE if window <= 0 || (window % slot_length_minutes) != 0
-    if break_start_minutes && errors[:slot_length_minutes].nil?
-      is_misaligned = (break_start_minutes - start_minutes) % slot_length_minutes != 0
-      errors[:break_start] = BREAK_ALIGNMENT_MESSAGE if is_misaligned
+    if errors.empty?
+      window = end_minutes - start_minutes
+      window -= (break_end_minutes - break_start_minutes) if break_start_minutes && break_end_minutes
+
+      errors[:slot_length_minutes] = SLOT_LENGTH_MESSAGE if window <= 0 || (window % slot_length_minutes) != 0
     end
     halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
 
@@ -237,17 +255,26 @@ class DoctorRoutes < ApiRoutes
     json(days: available_dates_in_month(doctor, month))
   end
 
-  # Every slot the doctor's session settings produce for the given date, per
-  # this plan's documented scope limit: no booked-slot filtering yet. `date`
-  # is validated for the query-param contract but, at this scope, doesn't
-  # otherwise affect which slots come back.
+  # The slots the doctor's session settings produce for the given date, but
+  # only on a date the doctor has actually marked available — an unavailable
+  # date has no bookable slots at all, so it returns an empty list rather
+  # than a full day of slots that only look bookable. Consistent with
+  # `GET /doctors/:id/availability`: a date missing from that response has no
+  # slots here either.
+  #
+  # Still subject to this plan's documented scope limit: no booked-slot
+  # filtering yet (appointments don't exist), so on an available date every
+  # generated slot comes back.
   get '/doctors/:id/slots' do
     doctor = active_doctor(params['id'])
     halt_json_error 404, NOT_FOUND_MESSAGE unless doctor
 
-    resolve_date_param(params['date'])
-    settings = DoctorSessionSettings.first(user_id: doctor.id)
-    json(slots: generate_slots(settings))
+    date = resolve_date_param(params['date'])
+    if available_day?(doctor, date)
+      json(slots: generate_slots(DoctorSessionSettings.first(user_id: doctor.id)))
+    else
+      json(slots: [])
+    end
   end
 
   helpers do
@@ -290,13 +317,26 @@ class DoctorRoutes < ApiRoutes
 
     # The sorted "YYYY-MM-DD" dates `user` has marked available within the
     # given "YYYY-MM" month.
+    #
+    # `is_available: true` is redundant today — `PUT /doctor/availability`
+    # deletes rows rather than flipping the flag, so only `true` rows exist —
+    # but it's the column's whole point, and stating it here means a future
+    # feature that *does* write a `false` row (an explicitly-closed holiday,
+    # say) can't have it silently read back as available.
     def available_dates_in_month(user, month)
       year, month_number = month.split('-').map(&:to_i)
       start_date = Date.new(year, month_number, 1)
       end_date = Date.new(year, month_number, -1)
 
-      DoctorAvailabilityDay.where(user_id: user.id, date: start_date..end_date)
+      DoctorAvailabilityDay.where(user_id: user.id, date: start_date..end_date, is_available: true)
                             .order(:date).select_map(:date).map(&:iso8601)
+    end
+
+    # Whether `user` has marked the single `date` available. Same row shape
+    # and same `is_available: true` filter as `available_dates_in_month`,
+    # narrowed to one day.
+    def available_day?(user, date)
+      !DoctorAvailabilityDay.where(user_id: user.id, date: date, is_available: true).empty?
     end
 
     # An active (not locked/deactivated/invited) doctor by user id, or nil.

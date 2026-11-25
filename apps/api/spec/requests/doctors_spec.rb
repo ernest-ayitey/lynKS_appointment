@@ -193,6 +193,13 @@ RSpec.describe 'GET /api/v1/doctors/:id/slots' do
       first_name: 'Dana', last_name: 'Who', password: 'Sup3r!word')
   end
 
+  # Slots only exist on a date the doctor marked available, so every
+  # slot-shape example below needs this date on the calendar first.
+  let!(:available_date) do
+    DoctorAvailabilityDay.create(user_id: doctor.id, date: Date.new(2027, 1, 5))
+    '2027-01-05'
+  end
+
   def get_slots(token, doctor_id, query = {})
     get "/api/v1/doctors/#{doctor_id}/slots", query, { 'HTTP_AUTHORIZATION' => "Bearer #{token}" }
   end
@@ -200,6 +207,41 @@ RSpec.describe 'GET /api/v1/doctors/:id/slots' do
   def put_session_settings(token, body)
     put '/api/v1/doctor/session-settings', body.to_json,
         { 'HTTP_AUTHORIZATION' => "Bearer #{token}", 'CONTENT_TYPE' => 'application/json' }
+  end
+
+  it 'returns no slots for a date the doctor has not marked available' do
+    get_slots(TokenService.issue_access_token(patient), doctor.id, date: '2027-01-06')
+    expect(last_response.status).to eq(200)
+    expect(JSON.parse(last_response.body)).to eq('slots' => [])
+  end
+
+  it 'returns the full slot list for a date the doctor has marked available' do
+    get_slots(TokenService.issue_access_token(patient), doctor.id, date: available_date)
+    expect(last_response.status).to eq(200)
+
+    body = JSON.parse(last_response.body)
+    expect(body['slots'].length).to eq(24)
+    expect(body['slots'].first).to eq('09:00')
+    expect(body['slots'].last).to eq('16:40')
+  end
+
+  it 'agrees with GET /doctors/:id/availability about which dates have slots' do
+    token = TokenService.issue_access_token(patient)
+    get "/api/v1/doctors/#{doctor.id}/availability", { month: '2027-01' },
+        { 'HTTP_AUTHORIZATION' => "Bearer #{token}" }
+    days = JSON.parse(last_response.body)['days']
+    expect(days).to eq([available_date])
+
+    get_slots(token, doctor.id, date: '2027-01-07')
+    expect(JSON.parse(last_response.body)['slots']).to be_empty
+  end
+
+  it 'returns no slots for a date whose availability row is explicitly is_available: false' do
+    DoctorAvailabilityDay.create(user_id: doctor.id, date: Date.new(2027, 1, 8), is_available: false)
+
+    get_slots(TokenService.issue_access_token(patient), doctor.id, date: '2027-01-08')
+    expect(last_response.status).to eq(200)
+    expect(JSON.parse(last_response.body)).to eq('slots' => [])
   end
 
   it 'returns the default-schedule slots when the doctor has no session settings row yet' do
@@ -251,6 +293,8 @@ RSpec.describe 'GET /api/v1/doctors/:id/slots' do
   end
 
   it 'defaults to today when the date param is omitted' do
+    DoctorAvailabilityDay.create(user_id: doctor.id, date: Date.today)
+
     get_slots(TokenService.issue_access_token(patient), doctor.id)
     expect(last_response.status).to eq(200)
     expect(JSON.parse(last_response.body)['slots'].first).to eq('09:00')
