@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth-context';
 
 export default function RoleLandingPage() {
@@ -16,6 +16,14 @@ export default function RoleLandingPage() {
         <p className="text-slate-900">
           Signed in as {user?.role}: {user?.first_name} {user?.last_name}
         </p>
+        {user?.role === 'doctor' && (
+          <Link
+            to="/doctor/availability"
+            className="mt-4 inline-block rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700"
+          >
+            Manage Availability
+          </Link>
+        )}
         <button
           type="button"
           onClick={handleLogout}
