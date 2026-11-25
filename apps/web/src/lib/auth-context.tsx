@@ -179,7 +179,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function logout() {
     try {
-      await apiRequest('/auth/logout', { method: 'POST', accessToken: accessTokenRef.current });
+      // Via authedFetch, not apiRequest: on an already-expired access token
+      // the backend's authenticate! 401s before the route body runs, so the
+      // revoke step never happens and the refresh token stays valid
+      // server-side for up to 30 days. The one-shot refresh-and-retry gets a
+      // live token so the revoke actually lands.
+      await authedFetch('/auth/logout', { method: 'POST' });
     } catch {
       // The user's intent to log out is honored locally regardless of
       // what the network does.
@@ -204,10 +209,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function changePassword(payload: ChangePasswordPayload) {
-    const response = await apiRequest<SessionResponse>('/auth/password/change', {
+    // Via authedFetch, not apiRequest: a forced-change user can easily sit on
+    // this screen long enough for the access token to expire, and without the
+    // retry path that submit would 401 with no recovery available to them
+    // (they cannot navigate anywhere else until the change succeeds).
+    const response = await authedFetch<SessionResponse>('/auth/password/change', {
       method: 'POST',
       body: payload,
-      accessToken: accessTokenRef.current,
     });
     applySession(response);
   }

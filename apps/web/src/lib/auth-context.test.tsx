@@ -45,6 +45,70 @@ describe('AuthProvider', () => {
     expect(result.current.user?.username).toBe('a');
   });
 
+  it('never persists the access token to sessionStorage', async () => {
+    mockFetchSequence([
+      { status: 401, body: { error: 'x' } }, // boot refresh fails
+      { status: 200, body: { access_token: 'super-secret-access-token', must_change_password: false, user: { id: 1, username: 'a', role: 'patient', first_name: 'A', last_name: 'B' } } },
+    ]);
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.status).toBe('unauthenticated'));
+    await act(async () => { await result.current.login('a', 'pw'); });
+
+    expect(result.current.status).toBe('authenticated');
+    // The single most security-critical property of this provider: the access
+    // token lives only in an in-memory ref, so an XSS payload reading web
+    // storage finds nothing to replay. The cached profile is there; the token
+    // must not be, under any key.
+    expect(JSON.stringify(sessionStorage)).not.toContain('super-secret-access-token');
+    expect(JSON.stringify(localStorage)).not.toContain('super-secret-access-token');
+    // ...and it is not exposed on the context value either.
+    expect(JSON.stringify(Object.keys(result.current))).not.toContain('access');
+  });
+
+  it('logout retries through refresh when the access token has already expired, so the revoke lands', async () => {
+    sessionStorage.setItem('auth:user', JSON.stringify({ id: 1, username: 'a', role: 'patient', first_name: 'A', last_name: 'B', must_change_password: false }));
+    const fetchMock = mockFetchSequence([
+      { status: 200, body: { access_token: 'tok' } }, // boot refresh
+      { status: 401, body: { error: 'expired' } }, // logout, first attempt
+      { status: 200, body: { access_token: 'new-tok' } }, // the refresh it triggers
+      { status: 204, body: undefined }, // logout, retried — the revoke
+    ]);
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.status).toBe('authenticated'));
+
+    await act(async () => { await result.current.logout(); });
+
+    const logoutCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/auth/logout'));
+    expect(logoutCalls).toHaveLength(2);
+    // The retry carried the freshly refreshed token, so the backend actually
+    // reached the revoke step instead of 401ing in authenticate!.
+    expect(logoutCalls[1][1].headers.Authorization).toBe('Bearer new-tok');
+    expect(result.current.status).toBe('unauthenticated');
+  });
+
+  it('changePassword retries through refresh when the access token expired while the form was open', async () => {
+    sessionStorage.setItem('auth:user', JSON.stringify({ id: 1, username: 'a', role: 'patient', first_name: 'A', last_name: 'B', must_change_password: true }));
+    const session = { access_token: 'post-change-tok', must_change_password: false, user: { id: 1, username: 'a', role: 'patient', first_name: 'A', last_name: 'B' } };
+    const fetchMock = mockFetchSequence([
+      { status: 200, body: { access_token: 'tok' } }, // boot refresh
+      { status: 401, body: { error: 'expired' } }, // change, first attempt
+      { status: 200, body: { access_token: 'new-tok' } }, // the refresh it triggers
+      { status: 200, body: session }, // change, retried
+    ]);
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.status).toBe('authenticated'));
+
+    await act(async () => {
+      await result.current.changePassword({ current_password: 'old', password: 'new', password_confirmation: 'new' });
+    });
+
+    const changeCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/auth/password/change'));
+    expect(changeCalls).toHaveLength(2);
+    expect(changeCalls[1][1].headers.Authorization).toBe('Bearer new-tok');
+    // The retry's session response was applied, clearing the forced-change flag.
+    expect(result.current.user?.must_change_password).toBe(false);
+  });
+
   it('logout clears state even if the server call fails', async () => {
     // Realistic same-tab case: a prior login already cached the user;
     // /auth/refresh on boot only ever returns {access_token}, never user.
