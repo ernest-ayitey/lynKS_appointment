@@ -1,3 +1,4 @@
+require 'json'
 require_relative 'api_base'
 
 # Routes mounted at '/api/v1' for departments, doctors, and their
@@ -7,6 +8,20 @@ require_relative 'api_base'
 # needed, come per-route in later tasks (3, 4, 5, 6) that extend this file.
 class DoctorRoutes < ApiRoutes
   helpers AuthHelpers
+
+  SLOT_LENGTH_MESSAGE = 'Slot length must evenly divide the session window'
+  BREAK_ALIGNMENT_MESSAGE = 'Break must align with a slot boundary'
+
+  DEFAULT_SESSION_SETTINGS = {
+    start_time: '09:00',
+    end_time: '17:00',
+    slot_length_minutes: 20,
+    max_patients_per_day: nil,
+    break_start: nil,
+    break_end: nil
+  }.freeze
+
+  TIME_OF_DAY = /\A([01]\d|2[0-3]):([0-5]\d)\z/
 
   # Scoped to this file's own paths rather than a blanket `before` so a
   # request for a path this file doesn't define (e.g. '/auth/does-not-exist',
@@ -20,6 +35,23 @@ class DoctorRoutes < ApiRoutes
   # enforce, without that side effect.
   before('/departments') { authenticate! }
   before('/doctors') { authenticate! }
+
+  # `authenticate!` must run before `require_role!` in this same filter:
+  # `require_role!` reads `current_user.role`, which only exists once
+  # `authenticate!` has populated it.
+  before('/doctor/session-settings') { authenticate!; require_role!('doctor') }
+
+  before('/doctor/session-settings') do
+    if request.body
+      request.body.rewind
+      parsed = JSON.parse(request.body.read)
+      @payload = parsed.is_a?(Hash) ? parsed : {}
+    else
+      @payload = {}
+    end
+  rescue JSON::ParserError
+    @payload = {}
+  end
 
   get '/departments' do
     json(Department.all.map { |d| { id: d.id, name: d.name, doctor_count: d.doctor_profiles_dataset.count } })
@@ -43,5 +75,108 @@ class DoctorRoutes < ApiRoutes
         specialty_title: profile.specialty_title
       }
     end)
+  end
+
+  get '/doctor/session-settings' do
+    settings = DoctorSessionSettings.first(user_id: current_user.id)
+    json(session_settings_json(settings))
+  end
+
+  put '/doctor/session-settings' do
+    start_time = @payload['start_time']
+    end_time = @payload['end_time']
+    slot_length_minutes = @payload['slot_length_minutes']
+    max_patients_per_day = @payload['max_patients_per_day']
+    break_start = @payload['break_start']
+    break_end = @payload['break_end']
+
+    start_minutes = parse_time_of_day(start_time)
+    end_minutes = parse_time_of_day(end_time)
+    break_given = !break_start.nil? || !break_end.nil?
+
+    errors = {}
+    errors[:start_time] = 'Enter a valid start time (HH:MM)' if start_minutes.nil?
+    errors[:end_time] = 'Enter a valid end time (HH:MM)' if end_minutes.nil?
+    unless slot_length_minutes.is_a?(Integer) && slot_length_minutes > 0
+      errors[:slot_length_minutes] = 'Slot length must be a positive number of minutes'
+    end
+    unless max_patients_per_day.nil? || (max_patients_per_day.is_a?(Integer) && max_patients_per_day > 0)
+      errors[:max_patients_per_day] = 'Max patients per day must be a positive number'
+    end
+
+    break_start_minutes = nil
+    break_end_minutes = nil
+    if break_given
+      if break_start.nil? || break_end.nil?
+        errors[:break_start] = 'Break start and end must be set together'
+      else
+        break_start_minutes = parse_time_of_day(break_start)
+        break_end_minutes = parse_time_of_day(break_end)
+        errors[:break_start] = 'Enter a valid break start time (HH:MM)' if break_start_minutes.nil?
+        errors[:break_end] = 'Enter a valid break end time (HH:MM)' if break_end_minutes.nil?
+      end
+    end
+    halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
+
+    errors[:end_time] = 'End time must be after start time' if end_minutes <= start_minutes
+    if break_start_minutes && break_end_minutes && break_end_minutes <= break_start_minutes
+      errors[:break_end] = 'Break end must be after break start'
+    end
+    halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
+
+    # The session window, net of any break, is what slot_length_minutes must
+    # evenly divide. If a break is set, its start must also land on one of
+    # the slot boundaries stepped from start_time — otherwise Task 6's slot
+    # generator (which steps that same grid and skips [break_start,
+    # break_end)) could produce a slot that's only partially inside the
+    # break.
+    window = end_minutes - start_minutes
+    window -= (break_end_minutes - break_start_minutes) if break_start_minutes && break_end_minutes
+
+    errors[:slot_length_minutes] = SLOT_LENGTH_MESSAGE if window <= 0 || (window % slot_length_minutes) != 0
+    if break_start_minutes && errors[:slot_length_minutes].nil?
+      is_misaligned = (break_start_minutes - start_minutes) % slot_length_minutes != 0
+      errors[:break_start] = BREAK_ALIGNMENT_MESSAGE if is_misaligned
+    end
+    halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
+
+    settings = DoctorSessionSettings.find_or_create(user: current_user)
+    settings.update(
+      start_time: start_time,
+      end_time: end_time,
+      slot_length_minutes: slot_length_minutes,
+      max_patients_per_day: max_patients_per_day,
+      break_start: break_start,
+      break_end: break_end
+    )
+
+    json(session_settings_json(settings))
+  end
+
+  helpers do
+    def session_settings_json(settings)
+      return DEFAULT_SESSION_SETTINGS unless settings
+
+      {
+        start_time: settings.start_time,
+        end_time: settings.end_time,
+        slot_length_minutes: settings.slot_length_minutes,
+        max_patients_per_day: settings.max_patients_per_day,
+        break_start: settings.break_start,
+        break_end: settings.break_end
+      }
+    end
+
+    # Returns the minute-of-day (0-1439) for a "HH:MM" string, or nil for
+    # anything else, so malformed input becomes a 422 rather than reaching
+    # arithmetic or the database.
+    def parse_time_of_day(value)
+      return nil unless value.is_a?(String)
+
+      match = TIME_OF_DAY.match(value)
+      return nil unless match
+
+      (match[1].to_i * 60) + match[2].to_i
+    end
   end
 end
