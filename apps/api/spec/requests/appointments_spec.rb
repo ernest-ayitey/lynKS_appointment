@@ -390,6 +390,33 @@ RSpec.describe 'GET /api/v1/appointments and GET /api/v1/appointments/:id' do
       expect(body['submitted_at']).not_to be_nil
     end
 
+    it 'returns correct departments for appointments in different departments' do
+      dept_a = Department.create(name: 'Cardiology')
+      dept_b = Department.create(name: 'Neurology')
+
+      doctor_a = User.create(role: 'doctor', username: 'docCardio', email: 'cardio@x.com',
+        first_name: 'Card', last_name: 'Io', password: 'Sup3r!word')
+      DoctorProfile.create(user: doctor_a, department: dept_a, specialty_title: 'Cardiologist')
+
+      doctor_b = User.create(role: 'doctor', username: 'docNeuro', email: 'neuro@x.com',
+        first_name: 'Neur', last_name: 'O', password: 'Sup3r!word')
+      DoctorProfile.create(user: doctor_b, department: dept_b, specialty_title: 'Neurologist')
+
+      appointment_a = create_appointment(patient: patient, doctor: doctor_a, department: dept_a, time: '09:00')
+      appointment_b = create_appointment(patient: patient, doctor: doctor_b, department: dept_b, time: '10:00')
+
+      get_appointments(patient_token)
+
+      body = JSON.parse(last_response.body)['appointments']
+      expect(body.size).to eq(2)
+
+      appt_a_response = body.find { |a| a['id'] == appointment_a.id }
+      expect(appt_a_response['department']['name']).to eq('Cardiology')
+
+      appt_b_response = body.find { |a| a['id'] == appointment_b.id }
+      expect(appt_b_response['department']['name']).to eq('Neurology')
+    end
+
     it 'filters by a single status' do
       pending_appointment = create_appointment(patient: patient, status: 'pending')
       create_appointment(patient: patient, status: 'cancelled', time: '10:00')
@@ -477,6 +504,20 @@ RSpec.describe 'GET /api/v1/appointments and GET /api/v1/appointments/:id' do
         'doctor' => { 'id' => doctor.id, 'first_name' => 'Dana', 'last_name' => 'Who' },
         'department' => { 'id' => department.id, 'name' => 'Cardiology' },
         'status' => 'pending'
+      )
+    end
+
+    it 'includes decline fields as nil for a pending appointment' do
+      appointment = create_appointment(patient: patient, status: 'pending')
+
+      get_appointment(patient_token, appointment.id)
+
+      expect(last_response.status).to eq(200)
+      body = JSON.parse(last_response.body)
+      expect(body).to include(
+        'decline_reason_code' => nil,
+        'decline_message' => nil,
+        'decided_at' => nil
       )
     end
 
