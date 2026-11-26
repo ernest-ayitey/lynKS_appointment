@@ -145,6 +145,9 @@ apps/api/
 apps/web/
   src/
     features/
+      doctor/
+        doctor.api.ts    (modified: + getDepartments, getDoctors,
+                           getPublicAvailability, getSlots)
       appointments/
         appointments.api.ts
         book-appointment.page.tsx
