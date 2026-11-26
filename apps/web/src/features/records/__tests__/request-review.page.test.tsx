@@ -210,6 +210,20 @@ describe('RequestReviewPage', () => {
     expect(await screen.findByRole('status')).toHaveTextContent(/emails sent/i);
   });
 
+  it('typing an internal note and submitting "Approve" includes internal_note in the approveRequest payload', async () => {
+    approveRequest.mockResolvedValueOnce({ request: requestDetailFixture({ status: 'approved' }) });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('request-ref');
+
+    await user.type(screen.getByLabelText('Internal note'), 'Called patient to confirm.');
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() =>
+      expect(approveRequest).toHaveBeenCalledWith(authedFetch, 42, { internal_note: 'Called patient to confirm.' }),
+    );
+  });
+
   it('submitting "Approve a different slot" calls approveAlternateRequest with the chosen date+time', async () => {
     approveAlternateRequest.mockResolvedValueOnce({ request: requestDetailFixture({ status: 'approved' }) });
     const user = userEvent.setup();
@@ -227,6 +241,29 @@ describe('RequestReviewPage', () => {
       expect(approveAlternateRequest).toHaveBeenCalledWith(authedFetch, 42, { date: '2026-12-15', time: '10:00' }),
     );
     expect(await screen.findByRole('status')).toHaveTextContent(/emails sent/i);
+  });
+
+  it('typing an internal note and submitting "Approve a different slot" includes internal_note in the approveAlternateRequest payload', async () => {
+    approveAlternateRequest.mockResolvedValueOnce({ request: requestDetailFixture({ status: 'approved' }) });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('request-ref');
+
+    await user.click(screen.getByRole('radio', { name: 'Approve a different slot' }));
+    await user.type(screen.getByLabelText('New date'), '2026-12-15');
+    await waitFor(() => expect(getSlots).toHaveBeenCalledWith(authedFetch, 10, '2026-12-15'));
+    await user.selectOptions(screen.getByLabelText('New time'), '10:00');
+    await user.type(screen.getByLabelText('Internal note'), 'Patient prefers afternoons.');
+
+    await user.click(screen.getByRole('button', { name: 'Approve for the new time' }));
+
+    await waitFor(() =>
+      expect(approveAlternateRequest).toHaveBeenCalledWith(authedFetch, 42, {
+        date: '2026-12-15',
+        time: '10:00',
+        internal_note: 'Patient prefers afternoons.',
+      }),
+    );
   });
 
   it('submitting "Decline" calls declineRequest with the chosen reason+message and shows the declined outcome banner', async () => {
@@ -249,6 +286,26 @@ describe('RequestReviewPage', () => {
     );
     expect(await screen.findByRole('status')).toHaveTextContent(/slot.*freed/i);
     expect(await screen.findByRole('status')).toHaveTextContent(/patient.*emailed/i);
+  });
+
+  it('typing an internal note and submitting "Decline" includes internal_note in the declineRequest payload', async () => {
+    declineRequest.mockResolvedValueOnce({ request: requestDetailFixture({ status: 'declined' }) });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('request-ref');
+
+    await user.click(screen.getByRole('radio', { name: 'Decline' }));
+    await user.selectOptions(screen.getByLabelText('Reason'), 'slot_taken');
+    await user.type(screen.getByLabelText('Internal note'), 'Doctor flagged this one.');
+
+    await user.click(screen.getByRole('button', { name: 'Decline request' }));
+
+    await waitFor(() =>
+      expect(declineRequest).toHaveBeenCalledWith(authedFetch, 42, {
+        decline_reason_code: 'slot_taken',
+        internal_note: 'Doctor flagged this one.',
+      }),
+    );
   });
 
   it('a 422 from approveRequest surfaces via the error banner rather than being swallowed', async () => {
@@ -296,12 +353,27 @@ describe('RequestReviewPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Validation failed');
   });
 
-  it('the "no conflicts" line reflects whether the requested time is in the free-times list', async () => {
+  it('shows the conflict line when the requested time is NOT in the free-times list', async () => {
     getSlots.mockResolvedValue({ slots: ['10:00'] }); // 09:00 (the requested time) is NOT free
     renderPage();
     await screen.findByTestId('request-ref');
 
     await waitFor(() => expect(getSlots).toHaveBeenCalledWith(authedFetch, 10, REQUESTED_DATE));
-    expect(screen.getByTestId('no-conflicts-line')).toHaveTextContent(/conflict/i);
+    // Regex picked so it can only match the booked-branch string — both
+    // branches' text contain the substring "conflict" ("No conflicts..."
+    // and "Conflict..."), so a bare /conflict/i here would pass no matter
+    // which branch actually rendered.
+    expect(screen.getByTestId('no-conflicts-line')).toHaveTextContent(/already booked/i);
+    expect(screen.getByTestId('no-conflicts-line')).not.toHaveTextContent(/this time is free/i);
+  });
+
+  it('shows the no-conflicts line when the requested time IS in the free-times list', async () => {
+    getSlots.mockResolvedValue({ slots: ['09:00', '10:00'] }); // 09:00 (the requested time) is free
+    renderPage();
+    await screen.findByTestId('request-ref');
+
+    await waitFor(() => expect(getSlots).toHaveBeenCalledWith(authedFetch, 10, REQUESTED_DATE));
+    expect(screen.getByTestId('no-conflicts-line')).toHaveTextContent(/this time is free/i);
+    expect(screen.getByTestId('no-conflicts-line')).not.toHaveTextContent(/already booked/i);
   });
 });

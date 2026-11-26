@@ -74,9 +74,25 @@ export function getQueue(authedFetch: AuthedFetch, filters?: RecordsQueueFilters
   return authedFetch<RecordsQueueResponse>(`/records/queue${query ? `?${query}` : ''}`);
 }
 
+// `{ internal_note? }` per records.rb's `POST /records/requests/:id/approve`.
+export interface ApprovePayload {
+  internal_note?: string;
+}
+
 // Approves a pending request at its originally requested date/time.
-export function approveRequest(authedFetch: AuthedFetch, id: number): Promise<{ request: RecordsQueueRequest }> {
-  return authedFetch<{ request: RecordsQueueRequest }>(`/records/requests/${id}/approve`, { method: 'POST' });
+// `payload` is optional and defaults to omitted entirely — this keeps the
+// queue page's existing `approveRequest(authedFetch, id)` call (added in
+// Task 5, before this task's internal-note field existed) working
+// unchanged: no `payload` means no body at all, same as before.
+export function approveRequest(
+  authedFetch: AuthedFetch,
+  id: number,
+  payload?: ApprovePayload,
+): Promise<{ request: RecordsQueueRequest }> {
+  return authedFetch<{ request: RecordsQueueRequest }>(`/records/requests/${id}/approve`, {
+    method: 'POST',
+    ...(payload ? { body: payload } : {}),
+  });
 }
 
 // Reverts a declined or approved request back to `pending`.

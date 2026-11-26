@@ -196,20 +196,40 @@ export default function RequestReviewPage() {
     setFormBanner(null);
     setOutcomeBanner(null);
 
+    // Built once and reused across all three payloads below — `undefined`
+    // (never an empty string) when blank, since the backend's three
+    // decision routes all default a missing/falsy `internal_note` to the
+    // appointment's existing note (records.rb), so a present-but-empty
+    // value must not overwrite it.
+    const notePayload: { internal_note?: string } | undefined = data.internalNote
+      ? { internal_note: data.internalNote }
+      : undefined;
+
     try {
       if (data.decision === 'approve') {
-        await approveRequest(authedFetch, requestDetail.id);
+        // `undefined` is passed as "no third argument at all" rather than
+        // as an explicit third argument — keeps a no-note Approve call
+        // identical in arity to the pre-this-task call site this wrapper
+        // still has to support (records-queue.page.tsx's inline Approve
+        // button).
+        if (notePayload) {
+          await approveRequest(authedFetch, requestDetail.id, notePayload);
+        } else {
+          await approveRequest(authedFetch, requestDetail.id);
+        }
         setOutcomeBanner('Approved — emails sent to the patient and doctor.');
       } else if (data.decision === 'approve_alternate') {
         await approveAlternateRequest(authedFetch, requestDetail.id, {
           date: data.altDate,
           time: data.altTime,
+          ...notePayload,
         });
         setOutcomeBanner('Approved for the new time — emails sent to the patient and doctor.');
       } else {
         await declineRequest(authedFetch, requestDetail.id, {
           decline_reason_code: data.declineReasonCode,
           ...(data.declineMessage ? { decline_message: data.declineMessage } : {}),
+          ...notePayload,
         });
         setOutcomeBanner('Declined — the slot has been freed and the patient has been emailed.');
       }
