@@ -373,12 +373,19 @@ git commit -m "feat: add POST /appointments with race-safe double-booking preven
 **Interfaces:**
 - Produces: `GET /appointments?status=&search=&from=&to=` (patient-only,
   `current_user`'s own appointments) → 200 `{appointments: [...], total}`
-  — same per-appointment shape as `POST`'s response. `status` filters to
-  one value; `search` matches doctor first/last name or department name
-  (case-insensitive substring); `from`/`to` filter on `date`, both
-  optional, each independently. `GET /appointments/:id` → 200 (same
-  shape) or 404 if the id doesn't exist OR belongs to a different
-  patient (never distinguishable from the caller's side).
+  — same per-appointment shape as `POST`'s response. `status` accepts
+  ONE OR MORE comma-separated values (e.g. `status=declined,cancelled`)
+  and filters to rows whose status is any of them — a builder-check
+  review found that the screen spec's `MyAppointments` tabs (Task 7)
+  can't be expressed with a single-value filter (the "Declined-cancelled"
+  tab alone needs two statuses at once), so this task settles the
+  contract now rather than leaving Task 7 to invent a client-side merge
+  that would break the `total` count below. `search` matches doctor
+  first/last name or department name (case-insensitive substring);
+  `from`/`to` filter on `date`, both optional, each independently.
+  `GET /appointments/:id` → 200 (same shape) or 404 if the id doesn't
+  exist OR belongs to a different patient (never distinguishable from
+  the caller's side).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -386,6 +393,11 @@ git commit -m "feat: add POST /appointments with race-safe double-booking preven
   patient's, even when queried with no filters.
 - `status=pending` returns only pending ones (create one pending, one
   cancelled, assert the filtered count).
+- `status=declined,cancelled` (comma-separated) returns rows matching
+  EITHER status, excluding `pending`/`approved`/`completed`/`no_show`
+  ones (create one of each of the two matching statuses plus one
+  `pending`, assert the filtered count and that the `pending` one is
+  excluded).
 - `search=` matches on doctor last name case-insensitively.
 - `from`/`to` each narrow the date range independently.
 - `GET /appointments/:id` for the caller's own appointment → 200 with
@@ -401,6 +413,11 @@ git commit -m "feat: add POST /appointments with race-safe double-booking preven
 - [ ] **Step 2: Run tests to verify they fail**
 
 - [ ] **Step 3: Implement both routes**
+
+Parse `status` by splitting on `,` and filtering with `status:
+requested_statuses` (Sequel's `where` accepts an array for an IN
+clause) when present, with no filter when absent — a single value and a
+comma-separated list use the exact same code path.
 
 `before('/appointments') { authenticate!; require_role!('patient') }`
 already covers `GET /appointments/:id` if the filter string is a
@@ -555,38 +572,67 @@ git commit -m "feat: exclude occupied slots from public lookup; lock approved da
 
 ---
 
-### Task 6: `appointments.api.ts` and the Book Appointment page
+### Task 6: Patient-facing doctor-lookup API wrappers, `appointments.api.ts`, and the Book Appointment page
 
 **Files:**
+- Modify: `apps/web/src/features/doctor/doctor.api.ts` (add four
+  functions — see below; a builder-check review confirmed this file
+  currently has none of them, only the doctor's-own-data wrappers)
 - Create: `apps/web/src/features/appointments/appointments.api.ts`,
   `apps/web/src/features/appointments/book-appointment.page.tsx`
-- Test: `apps/web/src/features/appointments/__tests__/book-appointment.page.test.tsx`
+- Test: additions to `apps/web/src/features/doctor/__tests__/` for the
+  new wrappers (or a new file — builder's call, matching this file's
+  existing test-file convention), `apps/web/src/features/appointments/__tests__/book-appointment.page.test.tsx`
 
 **Interfaces:**
-- Consumes: `useAuth` (`authedFetch`), `applyApiError`,
-  `apps/web/src/features/doctor/doctor.api.ts`'s existing department/
-  doctor/availability/slot endpoints (merged — reuse them, don't
-  reimplement).
-- Produces: `appointments.api.ts`'s `bookAppointment(payload):
-  Promise<Appointment>` wrapping `POST /appointments`. `export default
-  function BookAppointmentPage()`, mounted at `/book` by Task 8.
+- Consumes: `useAuth` (`authedFetch`), `applyApiError`.
+- Produces, in `doctor.api.ts`: `getDepartments(authedFetch):
+  Promise<{id, name, doctor_count}[]>` (wraps `GET /departments`),
+  `getDoctors(authedFetch, departmentId?): Promise<{id, first_name,
+  last_name, department, specialty_title}[]>` (wraps `GET /doctors`),
+  `getPublicAvailability(authedFetch, doctorId, month):
+  Promise<AvailabilityDays>` (wraps `GET /doctors/:id/availability`,
+  reusing the `AvailabilityDays` type already defined in this file),
+  `getSlots(authedFetch, doctorId, date): Promise<{slots: string[]}>`
+  (wraps `GET /doctors/:id/slots`) — these four did not exist before this
+  task; nothing in the merged codebase currently calls these four
+  endpoints from the frontend. Produces, in `appointments.api.ts`:
+  `bookAppointment(authedFetch, payload): Promise<Appointment>` wrapping
+  `POST /appointments`. `export default function BookAppointmentPage()`,
+  mounted at `/book` by Task 8.
+
+**On the dependent-query pattern:** a builder-check review found that
+`doctor-availability.page.tsx` (this branch's structurally closest
+existing page) does NOT use `@tanstack/react-query` — it's plain
+`useEffect`/`useState` fetching, and it only ever calls the doctor's-own
+endpoints, never the four public ones this task adds. The only real
+`react-query` usage anywhere in this branch is `register.page.tsx`'s
+single debounced `enabled` query (one independent query, not a chain).
+This task's own call, settling what the earlier plan draft got wrong:
+use plain `useEffect`/`useState` for this page's department→doctor→day→
+slot chain too, matching `doctor-availability.page.tsx`'s actual style
+(each selection's `useEffect` depends on the previous selection's state;
+no `QueryClientProvider` needed for this page) — `@tanstack/react-query`
+stays reserved for the live-validation use case `register.page.tsx`
+established it for, not dependent-chain data loading in general.
 
 - [ ] **Step 1: Write the failing tests**
 
-Mock `useAuth`, `doctor.api`, and `appointments.api`. Render the page:
-- Picking a department narrows the doctor list (reuse the existing
-  `checkUsernameAvailability`-style pattern already established for
-  this kind of dependent-query UI — read `register.page.tsx` for the
-  `@tanstack/react-query` convention this branch already uses, and apply
-  the same `enabled:` dependent-query pattern here for doctor availability/
-  slots, which were already consumed this way by the doctor-availability
-  page's own calendar).
-- Picking a doctor loads their availability for the current month; days
-  not in the returned `days` array render disabled.
-- Picking an available day loads that day's slots; already-occupied slots
-  (now correctly excluded by the backend per Task 5) simply never render
-  as options — there is no "struck-through but visible" state to build,
-  since the backend already omits them.
+For the four new `doctor.api.ts` wrappers: each calls the right path
+with the right query params and returns the parsed body — thin,
+mechanical tests matching this file's existing wrapper tests' style.
+
+For `BookAppointmentPage`, mock `useAuth`, `doctor.api`, and
+`appointments.api`:
+- Picking a department narrows the doctor list (calls `getDoctors` with
+  the department id).
+- Picking a doctor loads their availability for the current month via
+  `getPublicAvailability`; days not in the returned `days` array render
+  disabled.
+- Picking an available day loads that day's slots via `getSlots`;
+  already-occupied slots (now correctly excluded by the backend per
+  Task 5) simply never render as options — there is no "struck-through
+  but visible" state to build, since the backend already omits them.
 - Submitting with all required fields calls `bookAppointment` with the
   exact backend payload shape (`doctor_id, date, time, visit_type,
   reason, sms_reminder_opt_in`).
@@ -596,16 +642,18 @@ Mock `useAuth`, `doctor.api`, and `appointments.api`. Render the page:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-- [ ] **Step 3: Implement `appointments.api.ts`'s `bookAppointment`**
+- [ ] **Step 3: Implement the four `doctor.api.ts` wrappers**
 
-- [ ] **Step 4: Implement `BookAppointmentPage`**
+- [ ] **Step 4: Implement `appointments.api.ts`'s `bookAppointment`**
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 5: Implement `BookAppointmentPage`**
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Run tests to verify they pass**
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add apps/web/src/features/appointments/appointments.api.ts apps/web/src/features/appointments/book-appointment.page.tsx apps/web/src/features/appointments/__tests__/book-appointment.page.test.tsx
+git add apps/web/src/features/doctor/doctor.api.ts apps/web/src/features/appointments/appointments.api.ts apps/web/src/features/appointments/book-appointment.page.tsx apps/web/src/features/appointments/__tests__/book-appointment.page.test.tsx
 git commit -m "feat: add Book Appointment page"
 ```
 
@@ -628,10 +676,23 @@ git commit -m "feat: add Book Appointment page"
 - [ ] **Step 1: Write the failing tests**
 
 - Renders the list returned by `listAppointments`, with status tags.
-- A status filter (tabs or a select — builder's call, matching the
-  screen spec's "All/Upcoming/Pending/Past/Declined-cancelled" tabs as
-  closely as practical) re-calls `listAppointments` with the right
-  `status` param.
+- Five tabs matching the screen spec exactly, each mapped to a concrete
+  call to `listAppointments` (resolved here, not left to the builder,
+  after a builder-check review found the naive single-status mapping
+  couldn't express all five):
+  - **All** — no `status`/`from`/`to` params.
+  - **Upcoming** — `status=approved` (matching the SAME definition the
+    screen spec itself uses for the dashboard's "Upcoming (approved)
+    count" stat card, so this tab and that stat agree).
+  - **Pending** — `status=pending`.
+  - **Past** — `to=<yesterday's date>` (no status filter — a past
+    appointment keeps whatever status it ended in).
+  - **Declined-cancelled** — `status=declined,cancelled` (Task 3's new
+    comma-separated support).
+  Each tab switch re-calls `listAppointments` with exactly these params;
+  test that at least the Upcoming and Declined-cancelled tabs send the
+  right param shape, since those two are the ones a naive implementation
+  would get wrong.
 - A "Cancel" action, shown only for `pending`/`approved` rows (never for
   terminal statuses), calls `cancelAppointment` and refetches/updates the
   list on success.
