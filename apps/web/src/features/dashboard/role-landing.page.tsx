@@ -24,6 +24,22 @@ export default function RoleLandingPage() {
             Manage Availability
           </Link>
         )}
+        {user?.role === 'patient' && (
+          <>
+            <Link
+              to="/book"
+              className="mt-4 inline-block rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700"
+            >
+              Book an Appointment
+            </Link>
+            <Link
+              to="/appointments"
+              className="mt-4 inline-block rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700"
+            >
+              My Appointments
+            </Link>
+          </>
+        )}
         <button
           type="button"
           onClick={handleLogout}

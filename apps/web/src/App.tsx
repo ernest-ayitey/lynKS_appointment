@@ -1,5 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import BookAppointmentPage from './features/appointments/book-appointment.page';
+import MyAppointmentsPage from './features/appointments/my-appointments.page';
 import ChangePasswordPage from './features/auth/change-password.page';
 import ForgotPasswordPage from './features/auth/forgot-password.page';
 import LoginPage from './features/auth/login.page';
@@ -45,6 +47,22 @@ export default function App() {
                 element={
                   <ProtectedRoute allowedRoles={['doctor']}>
                     <DoctorAvailabilityPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/book"
+                element={
+                  <ProtectedRoute allowedRoles={['patient']}>
+                    <BookAppointmentPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/appointments"
+                element={
+                  <ProtectedRoute allowedRoles={['patient']}>
+                    <MyAppointmentsPage />
                   </ProtectedRoute>
                 }
               />
