@@ -20,6 +20,14 @@ class RecordsRoutes < ApiRoutes
   # status, so there is nothing left for this decision to do.
   ALREADY_DECIDED_MESSAGE = 'This request has already been decided'
 
+  # `undo`'s counterpart to `ALREADY_DECIDED_MESSAGE`: a `pending` request
+  # has no decision on it yet, so there is nothing for `undo` to revert.
+  NOTHING_TO_UNDO_MESSAGE = 'This request is still pending — there is nothing to undo'
+
+  # Field-level message for `decline` when `decline_reason_code` is missing
+  # or not one of the fixed, closed set in `Appointment::DECLINE_REASON_CODES`.
+  REASON_REQUIRED_MESSAGE = "Select a reason: #{Appointment::DECLINE_REASON_CODES.join(', ')}"
+
   # Field-level validation messages for `approve-alternate`'s target
   # date/time. This file's own copies of appointments.rb's identically
   # worded constants, per the established duplication-over-sharing
@@ -48,6 +56,8 @@ class RecordsRoutes < ApiRoutes
   # prefix reasoning above: neither of the two filters above runs for these.
   before('/records/requests/:id/approve') { authenticate!; require_role!('records') }
   before('/records/requests/:id/approve-alternate') { authenticate!; require_role!('records') }
+  before('/records/requests/:id/decline') { authenticate!; require_role!('records') }
+  before('/records/requests/:id/undo') { authenticate!; require_role!('records') }
 
   # Both decision routes above take a JSON body, so each gets its own copy
   # of the same body-parsing filter appointments.rb/doctors.rb use — one per
@@ -65,6 +75,20 @@ class RecordsRoutes < ApiRoutes
   end
 
   before('/records/requests/:id/approve-alternate') do
+    if request.body
+      request.body.rewind
+      parsed = JSON.parse(request.body.read)
+      @payload = parsed.is_a?(Hash) ? parsed : {}
+    else
+      @payload = {}
+    end
+  rescue JSON::ParserError
+    @payload = {}
+  end
+
+  # `decline` also takes a JSON body (`decline_reason_code`, `decline_message`,
+  # optional `internal_note`); `undo` takes none, so it gets no such filter.
+  before('/records/requests/:id/decline') do
     if request.body
       request.body.rewind
       parsed = JSON.parse(request.body.read)
@@ -216,6 +240,59 @@ class RecordsRoutes < ApiRoutes
     json(request: request_json(appointment))
   end
 
+  # Declines a pending request. Same shape as `approve` above — the cheap
+  # early-exit check, then a row-locked re-check inside a transaction to
+  # close the double-decide race, with `halt` deferred until after the
+  # transaction closes for the same `halt`-is-a-`throw` reason — except
+  # there is no slot-occupancy complication here, since declining never
+  # touches the slot (it stays released for someone else to book).
+  post '/records/requests/:id/decline' do
+    appointment = Appointment[params['id']]
+    halt_json_error 404, NOT_FOUND_MESSAGE unless appointment
+    halt_json_error 422, ALREADY_DECIDED_MESSAGE unless appointment.status == 'pending'
+
+    reason_code = @payload['decline_reason_code']
+    unless reason_code.is_a?(String) && Appointment::DECLINE_REASON_CODES.include?(reason_code)
+      halt_json_error 422, VALIDATION_FAILED_MESSAGE, decline_reason_code: REASON_REQUIRED_MESSAGE
+    end
+
+    already_decided = false
+    DB.transaction do
+      appointment = Appointment.where(id: appointment.id).for_update.first
+      if appointment.status == 'pending'
+        appointment.update(status: 'declined', decided_at: Time.now, decided_by_user_id: current_user.id,
+                            decline_reason_code: reason_code, decline_message: @payload['decline_message'],
+                            internal_note: @payload['internal_note'] || appointment.internal_note)
+      else
+        already_decided = true
+      end
+    end
+    halt_json_error 422, ALREADY_DECIDED_MESSAGE if already_decided
+
+    deliver_declined_email(appointment)
+    json(request: request_json(appointment))
+  end
+
+  # Reverts a declined or approved request back to `pending`, clearing the
+  # decision fields a prior `approve`/`approve-alternate`/`decline` wrote.
+  # `internal_note` is deliberately left alone — it's Records' own working
+  # note on the request, not part of the decision being undone. No row lock
+  # is needed here: unlike `approve`/`decline`, there is no competing
+  # "someone else is deciding the same row right now" race to close — the
+  # only invalid state transition (undoing an already-`pending` request) is
+  # fully determined by the one plain read above. No email either — an undo
+  # is Records correcting their own mistake, not an event the patient or
+  # doctor needs to hear about.
+  post '/records/requests/:id/undo' do
+    appointment = Appointment[params['id']]
+    halt_json_error 404, NOT_FOUND_MESSAGE unless appointment
+    halt_json_error 422, NOTHING_TO_UNDO_MESSAGE if appointment.status == 'pending'
+
+    appointment.update(status: 'pending', decided_at: nil, decided_by_user_id: nil,
+                        decline_reason_code: nil, decline_message: nil)
+    json(request: request_json(appointment))
+  end
+
   helpers do
     def ref_for(appointment)
       format('REQ-%05d', appointment.id)
@@ -255,6 +332,27 @@ class RecordsRoutes < ApiRoutes
               "Time: #{appointment.time}\n" \
               "Where: #{department.name}\n" \
               "Reference: #{ref_for(appointment)}"
+      )
+    end
+
+    # Sends `decline`'s single email, to the patient only — no doctor copy,
+    # since a declined request never touched the doctor's schedule. Fields
+    # per screen-specs.md:181-182 (EmailRejected): a "not approved" request
+    # detail line, a "Reason from Records" callout using `decline_message`,
+    # and a note that the requested slot has been released back for others
+    # to book.
+    def deliver_declined_email(appointment)
+      doctor = appointment.doctor
+
+      Mailer.deliver(
+        to: appointment.patient.email,
+        subject: 'Your appointment request was not approved',
+        body: "Doctor: #{doctor.first_name} #{doctor.last_name}\n" \
+              "Date: #{appointment.date.iso8601}\n" \
+              "Time: #{appointment.time}\n" \
+              "Reference: #{ref_for(appointment)}\n" \
+              "Reason from Records: #{appointment.decline_message}\n" \
+              'Your requested time has been released and is available to book again.'
       )
     end
 

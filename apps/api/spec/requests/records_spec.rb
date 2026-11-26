@@ -304,4 +304,141 @@ RSpec.describe 'GET /api/v1/records/queue' do
       end
     end
   end
+
+  def post_decline(token, id, body = {})
+    post "/api/v1/records/requests/#{id}/decline", body.to_json,
+         { 'HTTP_AUTHORIZATION' => "Bearer #{token}", 'CONTENT_TYPE' => 'application/json' }
+  end
+
+  def post_undo(token, id)
+    post "/api/v1/records/requests/#{id}/undo", nil,
+         { 'HTTP_AUTHORIZATION' => "Bearer #{token}" }
+  end
+
+  describe 'POST /records/requests/:id/decline' do
+    it 'declines a pending request with a valid reason, emailing the patient only' do
+      deliveries = []
+      allow(Mailer).to receive(:deliver) { |args| deliveries << args }
+
+      target = create_appointment(status: 'pending')
+
+      post_decline(records_token, target.id, decline_reason_code: 'slot_taken', decline_message: 'please rebook')
+      expect(last_response.status).to eq(200)
+
+      body = JSON.parse(last_response.body)
+      expect(body['request']['status']).to eq('declined')
+      expect(body['request']['decline_reason_code']).to eq('slot_taken')
+      expect(body['request']['decline_message']).to eq('please rebook')
+
+      row = Appointment[target.id]
+      expect(row.status).to eq('declined')
+      expect(row.decided_at).not_to be_nil
+      expect(row.decided_by_user_id).to eq(records_user.id)
+      expect(row.decline_reason_code).to eq('slot_taken')
+      expect(row.decline_message).to eq('please rebook')
+
+      expect(deliveries.size).to eq(1)
+      expect(deliveries.first[:to]).to eq(patient.email)
+    end
+
+    it 'rejects a missing or out-of-set decline_reason_code with a field-level 422' do
+      target = create_appointment(status: 'pending')
+
+      post_decline(records_token, target.id, decline_message: 'no reason given')
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['errors']).to have_key('decline_reason_code')
+
+      post_decline(records_token, target.id, decline_reason_code: 'not_a_real_code')
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['errors']).to have_key('decline_reason_code')
+
+      expect(Appointment[target.id].status).to eq('pending')
+    end
+
+    %w[approved declined cancelled].each do |status|
+      it "rejects a request that is already #{status}, with 422, and sends no email" do
+        allow(Mailer).to receive(:deliver)
+        target = create_appointment(status: status, decided_at: Time.now)
+
+        post_decline(records_token, target.id, decline_reason_code: 'slot_taken')
+        expect(last_response.status).to eq(422)
+        expect(JSON.parse(last_response.body)['error']).to eq('This request has already been decided')
+        expect(Mailer).not_to have_received(:deliver)
+      end
+    end
+
+    it 'returns 404 for a nonexistent id' do
+      post_decline(records_token, 999_999, decline_reason_code: 'slot_taken')
+      expect(last_response.status).to eq(404)
+    end
+
+    %w[patient doctor].each do |role|
+      it "rejects a #{role} role with 403" do
+        other = User.create(role: role, username: "u#{role}dec", email: "#{role}dec@x.com",
+          first_name: 'O', last_name: 'T', password: 'Sup3r!word')
+        target = create_appointment(status: 'pending')
+        post_decline(TokenService.issue_access_token(other), target.id, decline_reason_code: 'slot_taken')
+        expect(last_response.status).to eq(403)
+      end
+    end
+  end
+
+  describe 'POST /records/requests/:id/undo' do
+    it 'reverts a declined request back to pending and clears decision fields, leaving internal_note untouched' do
+      allow(Mailer).to receive(:deliver)
+      target = create_appointment(status: 'declined', decided_at: Time.now)
+      target.update(decided_by_user_id: records_user.id, decline_reason_code: 'slot_taken',
+                     decline_message: 'please rebook', internal_note: 'Checked insurance')
+
+      post_undo(records_token, target.id)
+      expect(last_response.status).to eq(200)
+
+      body = JSON.parse(last_response.body)
+      expect(body['request']['status']).to eq('pending')
+
+      row = Appointment[target.id]
+      expect(row.status).to eq('pending')
+      expect(row.decided_at).to be_nil
+      expect(row.decided_by_user_id).to be_nil
+      expect(row.decline_reason_code).to be_nil
+      expect(row.decline_message).to be_nil
+      expect(row.internal_note).to eq('Checked insurance')
+
+      expect(Mailer).not_to have_received(:deliver)
+    end
+
+    it 'reverts an approved request back to pending and clears decision fields' do
+      target = create_appointment(status: 'approved', decided_at: Time.now)
+      target.update(decided_by_user_id: records_user.id)
+
+      post_undo(records_token, target.id)
+      expect(last_response.status).to eq(200)
+      expect(Appointment[target.id].status).to eq('pending')
+    end
+
+    it 'rejects a request that is still pending, with 422, and sends no email' do
+      allow(Mailer).to receive(:deliver)
+      target = create_appointment(status: 'pending')
+
+      post_undo(records_token, target.id)
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['error']).to eq('This request is still pending — there is nothing to undo')
+      expect(Mailer).not_to have_received(:deliver)
+    end
+
+    it 'returns 404 for a nonexistent id' do
+      post_undo(records_token, 999_999)
+      expect(last_response.status).to eq(404)
+    end
+
+    %w[patient doctor].each do |role|
+      it "rejects a #{role} role with 403" do
+        other = User.create(role: role, username: "u#{role}undo", email: "#{role}undo@x.com",
+          first_name: 'O', last_name: 'T', password: 'Sup3r!word')
+        target = create_appointment(status: 'declined', decided_at: Time.now)
+        post_undo(TokenService.issue_access_token(other), target.id)
+        expect(last_response.status).to eq(403)
+      end
+    end
+  end
 end
