@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../../../lib/api-client';
 import BookAppointmentPage from '../book-appointment.page';
 
@@ -65,6 +65,27 @@ function isoDate(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+// Pinned to a fixed, safely mid-month date (the 15th of a 31-day month)
+// rather than the real `new Date()`. `dayAtOffset`'s clamp-to-end-of-month
+// below used to silently collapse `unavailableDay` and `availableDay` into
+// the *same* date whenever the suite happened to run on the last day or
+// two of any real-world month (today + 1 and today + 3 both clamp to the
+// same last day there), breaking the two assertions further down that
+// need those two days to stay distinct. Pinning the clock removes the
+// edge case entirely instead of just moving it.
+//
+// Fake timers stay active for the whole file (restored in `afterAll`
+// below), not just this module-load-time computation, because
+// BookAppointmentPage itself calls `new Date()` at render time to work
+// out "today" — it needs to see the same fixed date these fixtures were
+// built from.
+const FIXED_NOW = new Date(2026, 0, 15); // January 15, 2026 (31-day month)
+// `toFake: ['Date']` only, so `setTimeout`/microtasks stay real — faking
+// those too would stall `userEvent` and `waitFor`, which depend on real
+// timers to resolve their internal waits.
+vi.useFakeTimers({ toFake: ['Date'] });
+vi.setSystemTime(FIXED_NOW);
+
 const now = new Date();
 const totalDaysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
 
@@ -125,6 +146,16 @@ describe('BookAppointmentPage', () => {
     getDoctors.mockResolvedValue(ALL_DOCTORS);
     getPublicAvailability.mockResolvedValue({ days: [availableDay] });
     getSlots.mockResolvedValue({ slots: ['09:00', '09:20'] });
+  });
+
+  // Restores the real clock once this file's examples are all done, rather
+  // than per-example: the fixed system time set at module load above has
+  // to stay in effect for every example in this file (BookAppointmentPage
+  // computes "today" via `new Date()` on every render), so resetting it
+  // between examples would make the component and the fixtures disagree
+  // about "today" from the second example onward.
+  afterAll(() => {
+    vi.useRealTimers();
   });
 
   it('loads all doctors unfiltered on mount, then narrows the list by the selected department', async () => {
