@@ -455,4 +455,85 @@ RSpec.describe 'GET /api/v1/appointments and GET /api/v1/appointments/:id' do
       expect(last_response.body).to eq(mismatch_body)
     end
   end
+
+  describe 'POST /appointments/:id/cancel' do
+    def cancel_appointment(token, id)
+      post "/api/v1/appointments/#{id}/cancel", {}, { 'HTTP_AUTHORIZATION' => "Bearer #{token}" }
+    end
+
+    it 'rejects a request with no access token' do
+      appointment = create_appointment(patient: patient)
+      post "/api/v1/appointments/#{appointment.id}/cancel"
+      expect(last_response.status).to eq(401)
+    end
+
+    %w[doctor records admin].each do |role|
+      it "rejects a #{role}-role caller with 403" do
+        appointment = create_appointment(patient: patient)
+        other = User.create(role: role, username: "u#{role}cancel", email: "#{role}cancel@x.com",
+          first_name: 'O', last_name: 'T', password: 'Sup3r!word')
+        cancel_appointment(TokenService.issue_access_token(other), appointment.id)
+        expect(last_response.status).to eq(403)
+      end
+    end
+
+    it 'cancels a pending appointment' do
+      appointment = create_appointment(patient: patient, status: 'pending')
+
+      cancel_appointment(patient_token, appointment.id)
+
+      expect(last_response.status).to eq(200)
+      body = JSON.parse(last_response.body)
+      expect(body['id']).to eq(appointment.id)
+      expect(body['status']).to eq('cancelled')
+      expect(appointment.refresh.status).to eq('cancelled')
+    end
+
+    it 'cancels an approved appointment (no cutoff yet)' do
+      appointment = create_appointment(patient: patient, status: 'approved')
+
+      cancel_appointment(patient_token, appointment.id)
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['status']).to eq('cancelled')
+    end
+
+    it 'leaves OCCUPYING_STATUSES once cancelled, freeing the doctor/date/time slot' do
+      appointment = create_appointment(patient: patient, status: 'approved', date: Date.today + 10, time: '09:00')
+      expect(Appointment::OCCUPYING_STATUSES).to include(appointment.status)
+
+      cancel_appointment(patient_token, appointment.id)
+      expect(last_response.status).to eq(200)
+
+      still_occupying = Appointment.where(doctor_id: doctor.id, date: Date.today + 10, time: '09:00',
+                                           status: Appointment::OCCUPYING_STATUSES)
+      expect(still_occupying).to be_empty
+    end
+
+    %w[cancelled completed no_show declined].each do |terminal_status|
+      it "rejects cancelling an already-#{terminal_status} appointment with 422" do
+        appointment = create_appointment(patient: patient, status: terminal_status)
+
+        cancel_appointment(patient_token, appointment.id)
+
+        expect(last_response.status).to eq(422)
+        expect(JSON.parse(last_response.body)['error']).to eq('This appointment can no longer be cancelled')
+        expect(appointment.refresh.status).to eq(terminal_status)
+      end
+    end
+
+    it "404s for another patient's appointment" do
+      appointment = create_appointment(patient: other_patient)
+
+      cancel_appointment(patient_token, appointment.id)
+
+      expect(last_response.status).to eq(404)
+      expect(appointment.refresh.status).to eq('pending')
+    end
+
+    it '404s for a nonexistent id' do
+      cancel_appointment(patient_token, 999_999)
+      expect(last_response.status).to eq(404)
+    end
+  end
 end

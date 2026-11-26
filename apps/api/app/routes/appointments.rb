@@ -19,6 +19,7 @@ class AppointmentRoutes < ApiRoutes
   VISIT_TYPE_MESSAGE = "Visit type must be one of: #{Appointment::VISIT_TYPES.join(', ')}".freeze
   REASON_REQUIRED_MESSAGE = 'Reason is required'
   NOT_FOUND_MESSAGE = 'Not found'
+  ALREADY_FINAL_MESSAGE = 'This appointment can no longer be cancelled'
 
   ISO_DATE = /\A\d{4}-\d{2}-\d{2}\z/
 
@@ -39,6 +40,10 @@ class AppointmentRoutes < ApiRoutes
   # instead of switching to a regex filter. Task 4 adds its own filter here
   # for `/appointments/:id/cancel` the same way.
   before('/appointments/:id') { authenticate!; require_role!('patient') }
+
+  # A third distinct literal path, per the same `before 'path'`-is-not-a-prefix
+  # reasoning above: neither of the two filters above runs for this one.
+  before('/appointments/:id/cancel') { authenticate!; require_role!('patient') }
 
   before('/appointments') do
     if request.body
@@ -149,6 +154,21 @@ class AppointmentRoutes < ApiRoutes
     appointment = Appointment.where(id: params['id'], patient_id: current_user.id).first
     halt_json_error 404, NOT_FOUND_MESSAGE unless appointment
 
+    json(appointment_json(appointment))
+  end
+
+  # Same ownership-scoped lookup (and therefore the same 404 for "doesn't
+  # exist" and "belongs to someone else") as `GET /appointments/:id` above.
+  # Cancelling is allowed from either occupying status — `pending` or
+  # `approved` — per this plan's sequencing decision to not add a pre-visit
+  # cutoff yet; it's refused with 422 from any terminal status.
+  post '/appointments/:id/cancel' do
+    appointment = Appointment.where(id: params['id'], patient_id: current_user.id).first
+    halt_json_error 404, NOT_FOUND_MESSAGE unless appointment
+
+    halt_json_error 422, ALREADY_FINAL_MESSAGE unless Appointment::OCCUPYING_STATUSES.include?(appointment.status)
+
+    appointment.update(status: 'cancelled')
     json(appointment_json(appointment))
   end
 
