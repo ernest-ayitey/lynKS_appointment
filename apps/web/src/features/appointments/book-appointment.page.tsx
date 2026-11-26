@@ -209,8 +209,20 @@ export default function BookAppointmentPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authedFetch, doctorId, date]);
 
+  // `availableDays` can legitimately contain past dates: doctors.rb's
+  // `available_dates_in_month` applies no past-date filter (stale rows
+  // accumulate until a doctor unsets them via PUT /doctor/availability),
+  // and POST /appointments unconditionally 422s on a past date regardless
+  // of what DoctorAvailabilityDay says. So a day must be both in
+  // `availableDays` AND today-or-later to ever be selectable here.
+  const todayIso = isoDate(new Date());
+
+  function isBookable(dateIso: string): boolean {
+    return availableDays.has(dateIso) && dateIso >= todayIso;
+  }
+
   function selectDate(dateIso: string) {
-    if (!availableDays.has(dateIso)) return;
+    if (!isBookable(dateIso)) return;
     setValue('date', dateIso, { shouldValidate: true });
   }
 
@@ -315,7 +327,7 @@ export default function BookAppointmentPage() {
                 ))}
                 {days.map((day) => {
                   const dateIso = isoDate(new Date(monthDate.getFullYear(), monthDate.getMonth(), day));
-                  const available = availableDays.has(dateIso);
+                  const available = isBookable(dateIso);
                   const selected = date === dateIso;
                   return (
                     <button

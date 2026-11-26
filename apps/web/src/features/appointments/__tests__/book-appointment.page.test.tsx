@@ -66,9 +66,32 @@ function isoDate(date: Date): string {
 }
 
 const now = new Date();
-// Every month has at least 28 days, so days 10/11 always exist.
-const availableDay = isoDate(new Date(now.getFullYear(), now.getMonth(), 10));
-const unavailableDay = isoDate(new Date(now.getFullYear(), now.getMonth(), 11));
+const totalDaysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+
+// Offsets from "today", clamped to stay within the currently-rendered month
+// (the page shows only the current month, with no forward/back navigation)
+// — mirrors apps/api/spec/requests/appointments_spec.rb's own
+// `Date.today + N` convention for picking "clearly future" dates in tests,
+// instead of a hardcoded day-of-month that silently turns into a past date
+// as the real-world month goes on. That silent drift is exactly the bug
+// this suite now guards against: a hardcoded "day 10" test would eventually
+// start asserting a *past* day is enabled and bookable without anyone
+// noticing, since BookAppointmentPage used to gate a day's "available"
+// state on `availableDays.has(dateIso)` alone, with no `dateIso >= today`
+// check at all.
+//
+// (On the 1st of the month specifically, `dayAtOffset(-1)` clamps to day 1
+// itself rather than a true past day — an accepted, documented edge case,
+// same tolerance doctor-availability.page.test.tsx already takes for its
+// own hardcoded "day 20/21 always exist" comment above.)
+function dayAtOffset(offset: number): string {
+  const day = Math.min(Math.max(now.getDate() + offset, 1), totalDaysInMonth);
+  return isoDate(new Date(now.getFullYear(), now.getMonth(), day));
+}
+
+const pastStaleDay = dayAtOffset(-1); // in the past, but present in a mocked `days` response — the stale-availability-row scenario doctors.rb never filters out server-side either
+const unavailableDay = dayAtOffset(1); // in the future, but simply absent from the mocked `days` response
+const availableDay = dayAtOffset(3); // in the future and present in the mocked `days` response
 
 function renderPage() {
   render(
@@ -129,6 +152,26 @@ describe('BookAppointmentPage', () => {
     expect(getPublicAvailability).toHaveBeenCalledWith(authedFetch, 10, expect.stringMatching(/^\d{4}-\d{2}$/));
     expect(await screen.findByRole('button', { name: availableDay })).toBeEnabled();
     expect(screen.getByRole('button', { name: unavailableDay })).toBeDisabled();
+  });
+
+  // Regression test: doctors.rb's `available_dates_in_month` applies no
+  // past-date filter (a doctor's stale, never-unset availability rows for a
+  // date that has since passed legitimately stay in `days`), and
+  // POST /appointments unconditionally 422s on a past date regardless. A day
+  // in `days` that's already in the past must therefore still render
+  // disabled and must never be selectable, even though it's "available" by
+  // the backend's own lax definition.
+  it('treats a day already in the past as not bookable, even when the backend still reports it as available', async () => {
+    getPublicAvailability.mockResolvedValue({ days: [pastStaleDay, availableDay] });
+    const user = userEvent.setup();
+    renderPage();
+    await waitForInitialLoad();
+
+    await selectDoctor(user);
+
+    expect(screen.getByRole('button', { name: pastStaleDay })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: pastStaleDay }));
+    expect(getSlots).not.toHaveBeenCalled();
   });
 
   it("loads that day's slots once an available day is picked, rendering each as an option", async () => {
