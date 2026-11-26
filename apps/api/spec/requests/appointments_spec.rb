@@ -17,9 +17,16 @@ RSpec.describe 'POST /api/v1/appointments' do
     DoctorProfile.create(user: doctor, department: department, specialty_title: 'Cardiologist')
   end
 
+  # Relative to today (comfortably inside MAX_BOOKING_WINDOW_DAYS), not a
+  # hardcoded future date: unlike doctors_spec.rb's slot-shape examples,
+  # which hit a pure lookup endpoint with no date-window validation, this
+  # endpoint actively enforces `date >= Date.today` (see the DATE_OUT_OF_RANGE
+  # check in appointments.rb) — so a hardcoded date would silently start
+  # failing every example below once the calendar passed it.
   let!(:available_date) do
-    DoctorAvailabilityDay.create(user_id: doctor.id, date: Date.new(2027, 1, 5))
-    '2027-01-05'
+    date = Date.today + 40
+    DoctorAvailabilityDay.create(user_id: doctor.id, date: date)
+    date.iso8601
   end
 
   let(:valid_body) do
@@ -108,7 +115,7 @@ RSpec.describe 'POST /api/v1/appointments' do
     locked_doctor = User.create(role: 'doctor', username: 'docL', email: 'docl@x.com',
       first_name: 'Lee', last_name: 'Locked', password: 'Sup3r!word', status: 'locked')
     DoctorProfile.create(user: locked_doctor, department: department, specialty_title: 'Cardiologist')
-    DoctorAvailabilityDay.create(user_id: locked_doctor.id, date: Date.new(2027, 1, 5))
+    DoctorAvailabilityDay.create(user_id: locked_doctor.id, date: Date.iso8601(available_date))
 
     post_appointment(patient_token, valid_body.merge(doctor_id: -1))
     unknown_message = JSON.parse(last_response.body)['errors']['doctor_id']
@@ -119,7 +126,8 @@ RSpec.describe 'POST /api/v1/appointments' do
   end
 
   it "rejects a date the doctor hasn't marked available" do
-    post_appointment(patient_token, valid_body.merge(date: '2027-01-06'))
+    unavailable_date = (Date.today + 41).iso8601
+    post_appointment(patient_token, valid_body.merge(date: unavailable_date))
     expect(last_response.status).to eq(422)
     expect(JSON.parse(last_response.body)['errors']).to have_key('date')
   end
