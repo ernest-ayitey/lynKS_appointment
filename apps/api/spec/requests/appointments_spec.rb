@@ -150,6 +150,49 @@ RSpec.describe 'POST /api/v1/appointments' do
     expect(JSON.parse(last_response.body)['errors']).to have_key('date')
   end
 
+  # Both examples below give the doctor a full 24-hour, 1-minute-slot
+  # schedule for today (rather than relying on the default 09:00-17:00
+  # window) so a slot a few minutes behind/ahead of *whatever* real
+  # wall-clock time the suite happens to run at is always available on
+  # the grid — no hardcoded clock value, and no risk of the default
+  # window not covering "now" (e.g. a 2am test run).
+  def set_full_day_one_minute_schedule
+    put '/api/v1/doctor/session-settings', {
+      start_time: '00:00', end_time: '23:59', slot_length_minutes: 1,
+      max_patients_per_day: nil, break_start: nil, break_end: nil
+    }.to_json, { 'HTTP_AUTHORIZATION' => "Bearer #{doctor_token}", 'CONTENT_TYPE' => 'application/json' }
+    expect(last_response.status).to eq(200)
+  end
+
+  def minute_of_day_to_time(minutes)
+    format('%02d:%02d', minutes / 60, minutes % 60)
+  end
+
+  it 'rejects booking today at a time that has already passed' do
+    today = Date.today
+    DoctorAvailabilityDay.create(user_id: doctor.id, date: today)
+    set_full_day_one_minute_schedule
+
+    now_minutes = (Time.now.hour * 60) + Time.now.min
+    past_time = minute_of_day_to_time([now_minutes - 5, 0].max)
+
+    post_appointment(patient_token, valid_body.merge(date: today.iso8601, time: past_time))
+    expect(last_response.status).to eq(422)
+    expect(JSON.parse(last_response.body)['errors']).to have_key('time')
+  end
+
+  it 'allows booking today at a time still ahead of the current time' do
+    today = Date.today
+    DoctorAvailabilityDay.create(user_id: doctor.id, date: today)
+    set_full_day_one_minute_schedule
+
+    now_minutes = (Time.now.hour * 60) + Time.now.min
+    future_time = minute_of_day_to_time([now_minutes + 5, 1438].min)
+
+    post_appointment(patient_token, valid_body.merge(date: today.iso8601, time: future_time))
+    expect(last_response.status).to eq(201)
+  end
+
   it "rejects a time that isn't one of the doctor's generated slots" do
     post_appointment(patient_token, valid_body.merge(time: '09:05'))
     expect(last_response.status).to eq(422)

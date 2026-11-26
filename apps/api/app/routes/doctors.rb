@@ -314,7 +314,12 @@ class DoctorRoutes < ApiRoutes
       slots = generate_slots(DoctorSessionSettings.first(user_id: doctor.id))
       occupied_times = Appointment.where(doctor_id: doctor.id, date: date,
                                           status: Appointment::OCCUPYING_STATUSES).select_map(:time)
-      json(slots: slots - occupied_times)
+      excluded_times = occupied_times
+      # For today only, also exclude any slot whose time has already
+      # passed — a date in the future is necessarily entirely ahead of the
+      # clock, so this only needs to run when `date == Date.today`.
+      excluded_times += slots.select { |slot| parse_time_of_day(slot) <= current_minute_of_day } if date == Date.today
+      json(slots: slots - excluded_times)
     else
       json(slots: [])
     end
@@ -344,6 +349,14 @@ class DoctorRoutes < ApiRoutes
       return nil unless match
 
       (match[1].to_i * 60) + match[2].to_i
+    end
+
+    # The current minute-of-day (0-1439), for comparing against a parsed
+    # "HH:MM" slot when deciding whether a same-day slot is still ahead of
+    # the clock. Uses `Time.now` (wall clock), not `Date.today`.
+    def current_minute_of_day
+      now = Time.now
+      (now.hour * 60) + now.min
     end
 
     # Returns the parsed Date, or nil for anything that isn't a well-formed

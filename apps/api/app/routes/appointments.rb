@@ -15,6 +15,7 @@ class AppointmentRoutes < ApiRoutes
   DATE_OUT_OF_RANGE_MESSAGE = "Date must be today or within #{DoctorRoutes::MAX_BOOKING_WINDOW_DAYS} days from today".freeze
   DATE_UNAVAILABLE_MESSAGE = 'Doctor is not available on this date'
   TIME_UNAVAILABLE_MESSAGE = 'This time is not available'
+  TIME_IN_PAST_MESSAGE = 'This time has already passed today'
   TIME_ALREADY_BOOKED_MESSAGE = 'This time has already been booked'
   VISIT_TYPE_MESSAGE = "Visit type must be one of: #{Appointment::VISIT_TYPES.join(', ')}".freeze
   REASON_REQUIRED_MESSAGE = 'Reason is required'
@@ -95,6 +96,17 @@ class AppointmentRoutes < ApiRoutes
     slots = generate_slots(settings)
     unless time_param.is_a?(String) && slots.include?(time_param)
       halt_json_error 422, VALIDATION_FAILED_MESSAGE, time: TIME_UNAVAILABLE_MESSAGE
+    end
+
+    # A same-day booking must still be ahead of the clock: the date check
+    # above only rejects a *date* already in the past, so without this a
+    # patient booking this afternoon could still pick a slot from this
+    # morning. Only applies when `date == today` — any other accepted date
+    # is necessarily in the future, so the comparison would be a no-op (and
+    # `parse_time_of_day(Time.now...)` would be comparing against the wrong
+    # day's clock anyway).
+    if date == today && parse_time_of_day(time_param) <= current_minute_of_day
+      halt_json_error 422, VALIDATION_FAILED_MESSAGE, time: TIME_IN_PAST_MESSAGE
     end
 
     duration_minutes = settings&.slot_length_minutes || DoctorRoutes::DEFAULT_SESSION_SETTINGS[:slot_length_minutes]
@@ -237,6 +249,14 @@ class AppointmentRoutes < ApiRoutes
       return nil unless match
 
       (match[1].to_i * 60) + match[2].to_i
+    end
+
+    # The current minute-of-day (0-1439), for comparing against a parsed
+    # "HH:MM" slot when deciding whether a same-day booking/slot is still
+    # ahead of the clock. Uses `Time.now` (wall clock), not `Date.today`.
+    def current_minute_of_day
+      now = Time.now
+      (now.hour * 60) + now.min
     end
 
     # Whether `doctor_id` already has a `pending` or `approved` appointment
