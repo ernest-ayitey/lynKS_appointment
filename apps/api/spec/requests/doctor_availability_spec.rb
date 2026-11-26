@@ -194,5 +194,41 @@ RSpec.describe 'GET/PUT /api/v1/doctor/availability' do
       expect(DoctorAvailabilityDay.where(user_id: other_doctor.id).count).to eq(0)
       expect(DoctorAvailabilityDay.where(user_id: doctor.id).count).to eq(1)
     end
+
+    describe 'locking a day that holds an approved appointment' do
+      let!(:department) { Department.create(name: 'Cardiology') }
+
+      def create_appointment(status:, date:)
+        Appointment.create(
+          patient_id: patient.id, doctor_id: doctor.id, department_id: department.id,
+          date: date, time: '09:00', duration_minutes: 20,
+          visit_type: 'new_consultation', reason: 'Existing', status: status, submitted_at: Time.now
+        )
+      end
+
+      it 'rejects the whole request when one unset date has an approved appointment, deleting nothing' do
+        locked_date = Date.today + 10
+        other_date = Date.today + 11
+        DoctorAvailabilityDay.create(user_id: doctor.id, date: locked_date)
+        DoctorAvailabilityDay.create(user_id: doctor.id, date: other_date)
+        create_appointment(status: 'approved', date: locked_date)
+
+        put_availability(TokenService.issue_access_token(doctor),
+                          { unset: [locked_date.iso8601, other_date.iso8601] })
+        expect(last_response.status).to eq(422)
+        expect(DoctorAvailabilityDay.where(user_id: doctor.id, date: locked_date).count).to eq(1)
+        expect(DoctorAvailabilityDay.where(user_id: doctor.id, date: other_date).count).to eq(1)
+      end
+
+      it 'succeeds normally when the appointment on that date is only pending, not approved' do
+        date = Date.today + 10
+        DoctorAvailabilityDay.create(user_id: doctor.id, date: date)
+        create_appointment(status: 'pending', date: date)
+
+        put_availability(TokenService.issue_access_token(doctor), { unset: [date.iso8601] })
+        expect(last_response.status).to eq(200)
+        expect(DoctorAvailabilityDay.where(user_id: doctor.id, date: date).count).to eq(0)
+      end
+    end
   end
 end

@@ -372,4 +372,51 @@ RSpec.describe 'GET /api/v1/doctors/:id/slots' do
     get_slots(TokenService.issue_access_token(patient), deactivated_doctor.id, date: '2027-01-05')
     expect(last_response.status).to eq(404)
   end
+
+  describe 'excluding occupied slots' do
+    let!(:department) { Department.create(name: 'Cardiology') }
+
+    def create_appointment(status:, time: '09:00')
+      Appointment.create(
+        patient_id: patient.id, doctor_id: doctor.id, department_id: department.id,
+        date: Date.iso8601(available_date), time: time, duration_minutes: 20,
+        visit_type: 'new_consultation', reason: 'Existing', status: status, submitted_at: Time.now
+      )
+    end
+
+    it 'returns every generated slot when there are no appointments' do
+      get_slots(TokenService.issue_access_token(patient), doctor.id, date: available_date)
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['slots'].length).to eq(24)
+    end
+
+    it 'excludes the one slot held by a pending appointment' do
+      create_appointment(status: 'pending', time: '09:20')
+
+      get_slots(TokenService.issue_access_token(patient), doctor.id, date: available_date)
+      slots = JSON.parse(last_response.body)['slots']
+      expect(slots).not_to include('09:20')
+      expect(slots.length).to eq(23)
+    end
+
+    it 'excludes the one slot held by an approved appointment' do
+      create_appointment(status: 'approved', time: '09:40')
+
+      get_slots(TokenService.issue_access_token(patient), doctor.id, date: available_date)
+      slots = JSON.parse(last_response.body)['slots']
+      expect(slots).not_to include('09:40')
+      expect(slots.length).to eq(23)
+    end
+
+    %w[declined cancelled].each do |status|
+      it "still includes the slot when the only appointment there is #{status}" do
+        create_appointment(status: status, time: '10:00')
+
+        get_slots(TokenService.issue_access_token(patient), doctor.id, date: available_date)
+        slots = JSON.parse(last_response.body)['slots']
+        expect(slots).to include('10:00')
+        expect(slots.length).to eq(24)
+      end
+    end
+  end
 end

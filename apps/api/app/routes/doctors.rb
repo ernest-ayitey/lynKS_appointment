@@ -37,6 +37,7 @@ class DoctorRoutes < ApiRoutes
   INVALID_DATES_MESSAGE = 'Enter valid dates (YYYY-MM-DD)'
   DATES_TOO_FAR_MESSAGE = "Dates must be within #{MAX_BOOKING_WINDOW_DAYS} days from today".freeze
   DATES_IN_PAST_MESSAGE = 'Dates must not be in the past'
+  DATE_HAS_APPROVED_APPOINTMENT_MESSAGE = "This day has an approved appointment and can't be closed"
 
   # Scoped to this file's own paths rather than a blanket `before` so a
   # request for a path this file doesn't define (e.g. '/auth/does-not-exist',
@@ -256,6 +257,17 @@ class DoctorRoutes < ApiRoutes
     end
     halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
 
+    # A day holding an `approved` appointment can't be closed — the patient
+    # was already told yes. Checked before the transaction opens, same as
+    # the format/range checks above, so this rejection is all-or-nothing
+    # with the rest of the request rather than a partial write. A merely
+    # `pending` appointment doesn't lock the day: nothing has been promised
+    # to that patient yet.
+    if unset_dates.any? { |d| !Appointment.where(doctor_id: current_user.id, date: parsed_by_date[d], status: 'approved').empty? }
+      errors[:dates] = DATE_HAS_APPROVED_APPOINTMENT_MESSAGE
+    end
+    halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
+
     # `unset` wins when a date appears in both: write the deletions first,
     # then only insert the `set` dates that weren't also unset.
     DB.transaction do
@@ -289,16 +301,20 @@ class DoctorRoutes < ApiRoutes
   # `GET /doctors/:id/availability`: a date missing from that response has no
   # slots here either.
   #
-  # Still subject to this plan's documented scope limit: no booked-slot
-  # filtering yet (appointments don't exist), so on an available date every
-  # generated slot comes back.
+  # Also excludes any slot already held by a `pending` or `approved`
+  # appointment (`Appointment::OCCUPYING_STATUSES`) — a slot a patient can't
+  # actually book must not be offered as if it were open. A `declined` or
+  # `cancelled` appointment never occupies its slot, so it's left untouched.
   get '/doctors/:id/slots' do
     doctor = active_doctor(params['id'])
     halt_json_error 404, NOT_FOUND_MESSAGE unless doctor
 
     date = resolve_date_param(params['date'])
     if available_day?(doctor, date)
-      json(slots: generate_slots(DoctorSessionSettings.first(user_id: doctor.id)))
+      slots = generate_slots(DoctorSessionSettings.first(user_id: doctor.id))
+      occupied_times = Appointment.where(doctor_id: doctor.id, date: date,
+                                          status: Appointment::OCCUPYING_STATUSES).select_map(:time)
+      json(slots: slots - occupied_times)
     else
       json(slots: [])
     end
