@@ -249,3 +249,210 @@ RSpec.describe 'POST /api/v1/appointments' do
     end
   end
 end
+
+RSpec.describe 'GET /api/v1/appointments and GET /api/v1/appointments/:id' do
+  let!(:patient) do
+    User.create(role: 'patient', username: 'ernesta', email: 'e@x.com',
+      first_name: 'A', last_name: 'B', password: 'Sup3r!word')
+  end
+
+  let!(:other_patient) do
+    User.create(role: 'patient', username: 'otherpat', email: 'other@x.com',
+      first_name: 'O', last_name: 'P', password: 'Sup3r!word')
+  end
+
+  let!(:department) { Department.create(name: 'Cardiology') }
+
+  let!(:doctor) do
+    User.create(role: 'doctor', username: 'docA', email: 'doca@x.com',
+      first_name: 'Dana', last_name: 'Who', password: 'Sup3r!word')
+  end
+
+  let!(:doctor_profile) do
+    DoctorProfile.create(user: doctor, department: department, specialty_title: 'Cardiologist')
+  end
+
+  def patient_token
+    TokenService.issue_access_token(patient)
+  end
+
+  def other_patient_token
+    TokenService.issue_access_token(other_patient)
+  end
+
+  def get_appointments(token, query = {})
+    get '/api/v1/appointments', query, { 'HTTP_AUTHORIZATION' => "Bearer #{token}" }
+  end
+
+  def get_appointment(token, id)
+    get "/api/v1/appointments/#{id}", {}, { 'HTTP_AUTHORIZATION' => "Bearer #{token}" }
+  end
+
+  # Builds a persisted appointment directly (bypassing POST's availability/
+  # slot checks, which this file's booking specs already cover) so these
+  # examples can freely control patient, doctor, date, and status.
+  def create_appointment(patient:, doctor: self.doctor, department: self.department, date: Date.today + 10,
+                          time: '09:00', status: 'pending')
+    Appointment.create(
+      patient_id: patient.id, doctor_id: doctor.id, department_id: department.id,
+      date: date, time: time, duration_minutes: 20, visit_type: 'new_consultation',
+      reason: 'Routine check-up', status: status, submitted_at: Time.now
+    )
+  end
+
+  describe 'GET /appointments' do
+    it 'rejects a request with no access token' do
+      get '/api/v1/appointments'
+      expect(last_response.status).to eq(401)
+    end
+
+    %w[doctor records admin].each do |role|
+      it "rejects a #{role}-role caller with 403" do
+        other = User.create(role: role, username: "u#{role}", email: "#{role}@x.com",
+          first_name: 'O', last_name: 'T', password: 'Sup3r!word')
+        get_appointments(TokenService.issue_access_token(other))
+        expect(last_response.status).to eq(403)
+      end
+    end
+
+    it "returns only the caller's own appointments, never another patient's" do
+      mine = create_appointment(patient: patient)
+      create_appointment(patient: other_patient)
+
+      get_appointments(patient_token)
+
+      expect(last_response.status).to eq(200)
+      body = JSON.parse(last_response.body)
+      expect(body['total']).to eq(1)
+      expect(body['appointments'].map { |a| a['id'] }).to eq([mine.id])
+    end
+
+    it 'has the same per-appointment shape as POST' do
+      appointment = create_appointment(patient: patient)
+
+      get_appointments(patient_token)
+
+      body = JSON.parse(last_response.body)['appointments'].first
+      expect(body).to include(
+        'id' => appointment.id,
+        'doctor' => { 'id' => doctor.id, 'first_name' => 'Dana', 'last_name' => 'Who' },
+        'department' => { 'id' => department.id, 'name' => 'Cardiology' },
+        'date' => appointment.date.iso8601,
+        'time' => '09:00',
+        'duration_minutes' => 20,
+        'visit_type' => 'new_consultation',
+        'reason' => 'Routine check-up',
+        'status' => 'pending'
+      )
+      expect(body['submitted_at']).not_to be_nil
+    end
+
+    it 'filters by a single status' do
+      pending_appointment = create_appointment(patient: patient, status: 'pending')
+      create_appointment(patient: patient, status: 'cancelled', time: '10:00')
+
+      get_appointments(patient_token, status: 'pending')
+
+      body = JSON.parse(last_response.body)
+      expect(body['total']).to eq(1)
+      expect(body['appointments'].map { |a| a['id'] }).to eq([pending_appointment.id])
+    end
+
+    it 'filters by a comma-separated list of statuses, matching either one' do
+      declined = create_appointment(patient: patient, status: 'declined', time: '09:00')
+      cancelled = create_appointment(patient: patient, status: 'cancelled', time: '10:00')
+      create_appointment(patient: patient, status: 'pending', time: '11:00')
+
+      get_appointments(patient_token, status: 'declined,cancelled')
+
+      body = JSON.parse(last_response.body)
+      expect(body['total']).to eq(2)
+      expect(body['appointments'].map { |a| a['id'] }).to match_array([declined.id, cancelled.id])
+    end
+
+    it 'filters by search matching the doctor last name, case-insensitively' do
+      other_doctor = User.create(role: 'doctor', username: 'docB', email: 'docb@x.com',
+        first_name: 'Sam', last_name: 'Smith', password: 'Sup3r!word')
+      DoctorProfile.create(user: other_doctor, department: department, specialty_title: 'GP')
+
+      matching = create_appointment(patient: patient, doctor: doctor, time: '09:00')
+      create_appointment(patient: patient, doctor: other_doctor, time: '10:00')
+
+      get_appointments(patient_token, search: 'who')
+
+      body = JSON.parse(last_response.body)
+      expect(body['total']).to eq(1)
+      expect(body['appointments'].map { |a| a['id'] }).to eq([matching.id])
+    end
+
+    it 'filters by from/to independently, narrowing the date range' do
+      today = Date.today
+      early = create_appointment(patient: patient, date: today + 5, time: '09:00')
+      middle = create_appointment(patient: patient, date: today + 10, time: '09:00')
+      late = create_appointment(patient: patient, date: today + 20, time: '09:00')
+
+      get_appointments(patient_token, from: (today + 8).iso8601)
+      body = JSON.parse(last_response.body)
+      expect(body['appointments'].map { |a| a['id'] }).to match_array([middle.id, late.id])
+
+      get_appointments(patient_token, to: (today + 15).iso8601)
+      body = JSON.parse(last_response.body)
+      expect(body['appointments'].map { |a| a['id'] }).to match_array([early.id, middle.id])
+
+      get_appointments(patient_token, from: (today + 8).iso8601, to: (today + 15).iso8601)
+      body = JSON.parse(last_response.body)
+      expect(body['appointments'].map { |a| a['id'] }).to eq([middle.id])
+    end
+  end
+
+  describe 'GET /appointments/:id' do
+    it 'rejects a request with no access token' do
+      appointment = create_appointment(patient: patient)
+      get "/api/v1/appointments/#{appointment.id}"
+      expect(last_response.status).to eq(401)
+    end
+
+    %w[doctor records admin].each do |role|
+      it "rejects a #{role}-role caller with 403" do
+        appointment = create_appointment(patient: patient)
+        other = User.create(role: role, username: "u#{role}id", email: "#{role}id@x.com",
+          first_name: 'O', last_name: 'T', password: 'Sup3r!word')
+        get_appointment(TokenService.issue_access_token(other), appointment.id)
+        expect(last_response.status).to eq(403)
+      end
+    end
+
+    it "returns the caller's own appointment with the right shape" do
+      appointment = create_appointment(patient: patient)
+
+      get_appointment(patient_token, appointment.id)
+
+      expect(last_response.status).to eq(200)
+      body = JSON.parse(last_response.body)
+      expect(body).to include(
+        'id' => appointment.id,
+        'doctor' => { 'id' => doctor.id, 'first_name' => 'Dana', 'last_name' => 'Who' },
+        'department' => { 'id' => department.id, 'name' => 'Cardiology' },
+        'status' => 'pending'
+      )
+    end
+
+    it "404s for another patient's appointment" do
+      appointment = create_appointment(patient: other_patient)
+
+      get_appointment(patient_token, appointment.id)
+
+      expect(last_response.status).to eq(404)
+    end
+
+    it 'returns the same 404 response shape for a nonexistent id as for an ownership mismatch' do
+      other_owned = create_appointment(patient: other_patient)
+      get_appointment(patient_token, other_owned.id)
+      mismatch_body = last_response.body
+
+      get_appointment(patient_token, other_owned.id + 999_999)
+      expect(last_response.status).to eq(404)
+      expect(last_response.body).to eq(mismatch_body)
+    end
+  end
+end

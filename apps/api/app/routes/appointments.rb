@@ -18,6 +18,7 @@ class AppointmentRoutes < ApiRoutes
   TIME_ALREADY_BOOKED_MESSAGE = 'This time has already been booked'
   VISIT_TYPE_MESSAGE = "Visit type must be one of: #{Appointment::VISIT_TYPES.join(', ')}".freeze
   REASON_REQUIRED_MESSAGE = 'Reason is required'
+  NOT_FOUND_MESSAGE = 'Not found'
 
   ISO_DATE = /\A\d{4}-\d{2}-\d{2}\z/
 
@@ -26,6 +27,18 @@ class AppointmentRoutes < ApiRoutes
   # this file doesn't define must still be able to fall through to the next
   # mounted app's 404 rather than being intercepted here with a 401.
   before('/appointments') { authenticate!; require_role!('patient') }
+
+  # Sinatra's `before 'path'` only matches that exact path string, never as a
+  # prefix, so the filter above (scoped to the bare `/appointments`) does NOT
+  # also run for `/appointments/:id` — it has to be listed separately.
+  # Following doctors.rb's own precedent for this exact situation
+  # (`/doctors/:id/availability` and `/doctors/:id/slots` each get their own
+  # `before`, rather than one regex covering every `/doctors/...` path):
+  # explicit per-path filters are the established house style here, and they
+  # read unambiguously at every call site, so this file keeps using them
+  # instead of switching to a regex filter. Task 4 adds its own filter here
+  # for `/appointments/:id/cancel` the same way.
+  before('/appointments/:id') { authenticate!; require_role!('patient') }
 
   before('/appointments') do
     if request.body
@@ -112,6 +125,30 @@ class AppointmentRoutes < ApiRoutes
     halt_json_error 422, VALIDATION_FAILED_MESSAGE, time: TIME_ALREADY_BOOKED_MESSAGE if occupied
 
     status 201
+    json(appointment_json(appointment))
+  end
+
+  # The patient's own appointments, optionally narrowed by `status`,
+  # `search`, and/or `from`/`to`. No pagination: `total` is simply the count
+  # of the (filtered) rows returned, so a future paginated version would be
+  # a breaking change to this contract, not an additive one.
+  get '/appointments' do
+    dataset = Appointment.where(patient_id: current_user.id)
+    dataset = filter_by_status(dataset, params['status'])
+    dataset = filter_by_search(dataset, params['search'])
+    dataset = filter_by_date_range(dataset, params['from'], params['to'])
+
+    appointments = dataset.order(Sequel.desc(:date), Sequel.desc(:time)).all
+    json(appointments: appointments.map { |a| appointment_json(a) }, total: appointments.size)
+  end
+
+  # Ownership mismatch and "doesn't exist" are deliberately indistinguishable
+  # from the caller's side — both 404 with the same body — mirroring
+  # `GET /doctors/:id/availability`'s locked-doctor precedent in doctors.rb.
+  get '/appointments/:id' do
+    appointment = Appointment.where(id: params['id'], patient_id: current_user.id).first
+    halt_json_error 404, NOT_FOUND_MESSAGE unless appointment
+
     json(appointment_json(appointment))
   end
 
@@ -210,6 +247,49 @@ class AppointmentRoutes < ApiRoutes
                           status: Appointment::OCCUPYING_STATUSES)
                   .for_update
                   .empty?
+    end
+
+    # `status` accepts one or more comma-separated values (e.g.
+    # `status=declined,cancelled`) and matches rows whose status is any of
+    # them — a single value and a list take the exact same code path, since
+    # Sequel's `where` treats an array value as an IN clause. Absent/blank
+    # applies no filter at all, rather than matching zero rows.
+    def filter_by_status(dataset, raw_status)
+      requested_statuses = raw_status.to_s.split(',').map(&:strip).reject(&:empty?)
+      return dataset if requested_statuses.empty?
+
+      dataset.where(status: requested_statuses)
+    end
+
+    # Case-insensitive substring match against the doctor's first/last name
+    # or the department's name. `Sequel.ilike` degrades to a plain `LIKE` on
+    # MySQL (whose default collation is already case-insensitive) rather
+    # than the Postgres-only `ILIKE` operator, so this is portable as
+    # written. An empty/blank `search` applies no filter.
+    def filter_by_search(dataset, raw_search)
+      term = raw_search.to_s.strip
+      return dataset if term.empty?
+
+      pattern = "%#{term}%"
+      doctor_ids = User.where(Sequel.|(Sequel.ilike(:first_name, pattern), Sequel.ilike(:last_name, pattern)))
+                        .select_map(:id)
+      department_ids = Department.where(Sequel.ilike(:name, pattern)).select_map(:id)
+
+      dataset.where(Sequel.|({ doctor_id: doctor_ids }, { department_id: department_ids }))
+    end
+
+    # `from` and `to` each independently narrow the `date` range when
+    # present and parseable; an invalid or absent value is simply not
+    # applied, matching this route's generally lenient (ignore rather than
+    # 422) treatment of optional query filters.
+    def filter_by_date_range(dataset, raw_from, raw_to)
+      from_date = parse_booking_date(raw_from)
+      dataset = dataset.where(Sequel[:date] >= from_date) if from_date
+
+      to_date = parse_booking_date(raw_to)
+      dataset = dataset.where(Sequel[:date] <= to_date) if to_date
+
+      dataset
     end
 
     def appointment_json(appointment)
