@@ -252,10 +252,11 @@ git commit -m "feat: validate appointment status/decline-reason, fix list serial
 - Produces: `RecordsRoutes < ApiRoutes`, the class Tasks 3 and 4 add more
   routes to in this same file (mirrors how `AppointmentRoutes` grew across
   Plan 4's tasks).
-- Produces: a private `request_json(appointment)` helper returning the
-  `"request"` object shape below — Tasks 3 and 4 reuse it for their own
-  responses so every `/records/*` endpoint returns the request in exactly
-  one shape.
+- Produces: a private `request_json(appointment, department: nil)` helper
+  (same optional-keyword shape as Task 1's `appointment_json`) returning
+  the `"request"` object shape below — Tasks 3 and 4 reuse it for their
+  own responses so every `/records/*` endpoint returns the request in
+  exactly one shape.
 - Consumes: `Appointment::DECLINE_REASON_CODES` and the validations from
   Task 1 (so a malformed row can never reach this serializer).
 
@@ -331,12 +332,14 @@ class RecordsRoutes < ApiRoutes
       format('REQ-%05d', appointment.id)
     end
 
-    def request_json(appointment)
-      # id, ref, patient: {id, first_name, last_name[, email, phone — see
-      # note below]}, doctor: {id, first_name, last_name}, department:
-      # {id, name}, date, time, duration_minutes, visit_type, reason,
-      # status, submitted_at, decided_at, decline_reason_code,
-      # decline_message, internal_note
+    def request_json(appointment, department: nil)
+      # department defaults to Department[appointment.department_id] when
+      # not given, same optional-keyword pattern as Task 1's
+      # appointment_json. Returns: id, ref, patient: {id, first_name,
+      # last_name[, email, phone — see note below]}, doctor: {id,
+      # first_name, last_name}, department: {id, name}, date, time,
+      # duration_minutes, visit_type, reason, status, submitted_at,
+      # decided_at, decline_reason_code, decline_message, internal_note
     end
 
     def patient_stats_for(patient_id, excluding_appointment_id)
@@ -367,6 +370,17 @@ For `search`: reuse the same case-insensitive substring approach
 `appointments.rb` (`Sequel.ilike` against first/last name) — this file's
 own small duplicate, matching the established duplication-over-sharing
 convention between these route files.
+
+`GET /records/queue` must not reintroduce the N+1 Task 1 just fixed:
+build the filtered dataset with `.eager(:patient, :doctor)` before calling
+`.all`, and build one `departments_by_id = Department.where(id:
+appointments.map(&:department_id).uniq).as_hash(:id)` hash to pass into
+each row's `request_json` call — same shape as Task 1's fix to `GET
+/appointments`, so give `request_json` the same optional `department:`
+keyword `appointment_json` now has. The stats computation (separate
+`Appointment` queries over the *unfiltered* table, per this plan's Global
+Constraints) only needs counts/a max, never a `.all`, so it doesn't need
+eager-loading.
 
 - [ ] **Step 4: Run it, confirm it passes.**
 
@@ -401,6 +415,13 @@ git commit -m "feat: GET /records/queue and GET /records/requests/:id"
   (`appointments.rb:36-40`'s comment explains why).
 - Produces: `ALREADY_DECIDED_MESSAGE` constant, reused by Task 4's decline
   endpoint's own already-decided check.
+- Produces: `POST /records/requests/:id/approve-alternate`'s payload
+  contract — `{ date: "YYYY-MM-DD", time: "HH:MM", internal_note?:
+  string }`, using the exact same key names (`date`/`time`, not
+  `new_date`/`new_time`) as `POST /appointments`'s own booking payload,
+  so the validation logic mirrors that route's one-for-one. Task 6's
+  `approveAlternateRequest(authedFetch, id, { date, time })` sends this
+  shape.
 
 - [ ] **Step 1: Write the failing tests**
 
