@@ -9,6 +9,8 @@ import RegisterPage from './features/auth/register.page';
 import ResetPasswordPage from './features/auth/reset-password.page';
 import RoleLandingPage from './features/dashboard/role-landing.page';
 import DoctorAvailabilityPage from './features/doctor/doctor-availability.page';
+import RecordsQueuePage from './features/records/records-queue.page';
+import RequestReviewPage from './features/records/request-review.page';
 import { AuthProvider } from './lib/auth-context';
 import { ErrorBoundary } from './lib/error-boundary';
 import { ProtectedRoute } from './lib/protected-route';
@@ -63,6 +65,22 @@ export default function App() {
                 element={
                   <ProtectedRoute allowedRoles={['patient']}>
                     <MyAppointmentsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/records/queue"
+                element={
+                  <ProtectedRoute allowedRoles={['records']}>
+                    <RecordsQueuePage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/records/requests/:id"
+                element={
+                  <ProtectedRoute allowedRoles={['records']}>
+                    <RequestReviewPage />
                   </ProtectedRoute>
                 }
               />

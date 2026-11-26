@@ -73,6 +73,30 @@ describe('RoleLandingPage', () => {
     expect(screen.queryByRole('link', { name: /my appointments/i })).not.toBeInTheDocument();
   });
 
+  it('renders a link to the records queue page when the user is a records role', () => {
+    useAuth.mockReturnValue({
+      user: { role: 'records', first_name: 'Alice', last_name: 'Johnson' },
+      logout,
+    });
+
+    renderPage();
+
+    const link = screen.getByRole('link', { name: /review requests/i });
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveAttribute('href', '/records/queue');
+  });
+
+  it('does not render a link to the records queue page when the user is not a records role', () => {
+    useAuth.mockReturnValue({
+      user: { role: 'patient', first_name: 'John', last_name: 'Doe' },
+      logout,
+    });
+
+    renderPage();
+
+    expect(screen.queryByRole('link', { name: /review requests/i })).not.toBeInTheDocument();
+  });
+
   it('renders the sign in information and logout button for all roles', async () => {
     useAuth.mockReturnValue({
       user: { role: 'patient', first_name: 'John', last_name: 'Doe' },
