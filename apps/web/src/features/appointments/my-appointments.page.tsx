@@ -39,8 +39,11 @@ function filtersForTab(tab: TabKey): AppointmentFilters {
       return {};
     case 'upcoming':
       // Same definition as the dashboard's "Upcoming (approved)" stat card,
-      // so this tab and that count agree.
-      return { status: 'approved' };
+      // so this tab and that count agree — plus a `from: today` lower
+      // bound, since `status: 'approved'` alone says nothing about *when*:
+      // once appointments can be approved, a past-dated approved one must
+      // not show up under "Upcoming".
+      return { status: 'approved', from: isoDate(new Date()) };
     case 'pending':
       return { status: 'pending' };
     case 'past': {

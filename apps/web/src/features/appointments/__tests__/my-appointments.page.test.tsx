@@ -66,7 +66,7 @@ describe('MyAppointmentsPage', () => {
     expect(rowStatusTags.map((tag) => tag.textContent)).toEqual(['Pending', 'Approved']);
   });
 
-  it('switching to the Upcoming tab re-calls listAppointments with status=approved', async () => {
+  it('switching to the Upcoming tab re-calls listAppointments with status=approved and a from=today lower bound', async () => {
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(listAppointments).toHaveBeenCalledTimes(1));
@@ -74,7 +74,14 @@ describe('MyAppointmentsPage', () => {
     await user.click(screen.getByRole('button', { name: 'Upcoming' }));
 
     await waitFor(() => expect(listAppointments).toHaveBeenCalledTimes(2));
-    expect(listAppointments).toHaveBeenLastCalledWith(authedFetch, { status: 'approved' });
+    const lastCallFilters = listAppointments.mock.calls[1][1];
+    expect(lastCallFilters).toEqual({ status: 'approved', from: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
+
+    const today = new Date();
+    const expectedToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
+      today.getDate(),
+    ).padStart(2, '0')}`;
+    expect(lastCallFilters.from).toBe(expectedToday);
   });
 
   it('switching to the Pending tab re-calls listAppointments with status=pending', async () => {
