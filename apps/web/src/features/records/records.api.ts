@@ -83,3 +83,79 @@ export function approveRequest(authedFetch: AuthedFetch, id: number): Promise<{ 
 export function undoRequest(authedFetch: AuthedFetch, id: number): Promise<{ request: RecordsQueueRequest }> {
   return authedFetch<{ request: RecordsQueueRequest }>(`/records/requests/${id}/undo`, { method: 'POST' });
 }
+
+// `patient` on the detail endpoint carries email/phone on top of
+// RecordsPersonSummary's id/first_name/last_name — mirrors records.rb's
+// `request_json(appointment, detailed: true)`.
+export interface RecordsPatientDetail extends RecordsPersonSummary {
+  email: string;
+  phone: string;
+}
+
+// Same shape as RecordsQueueRequest, but with the detailed `patient`
+// above — this is what `GET /records/requests/:id` returns under `request`,
+// never what the queue list returns (which never passes `detailed: true`).
+export interface RecordsRequestDetail extends Omit<RecordsQueueRequest, 'patient'> {
+  patient: RecordsPatientDetail;
+}
+
+// Mirrors records.rb's `patient_stats_for` exactly — these four fields,
+// no more.
+export interface RecordsPatientStats {
+  previous_visits_count: number;
+  last_visit_date: string | null;
+  no_show_count: number;
+  other_pending_count: number;
+}
+
+export interface RecordsRequestDetailResponse {
+  request: RecordsRequestDetail;
+  patient_stats: RecordsPatientStats;
+}
+
+// No ownership scoping on the backend — any `records` user can fetch any
+// request by id (see records.rb's `GET /records/requests/:id` comment).
+export function getRequest(authedFetch: AuthedFetch, id: number): Promise<RecordsRequestDetailResponse> {
+  return authedFetch<RecordsRequestDetailResponse>(`/records/requests/${id}`);
+}
+
+// `date`/`time` (not `new_date`/`new_time`) per records.rb's
+// `POST /records/requests/:id/approve-alternate` — these exact key names
+// were settled during this plan's pre-flight review.
+export interface ApproveAlternatePayload {
+  date: string;
+  time: string;
+  internal_note?: string;
+}
+
+// Approves a pending request onto a different date/time than originally
+// requested.
+export function approveAlternateRequest(
+  authedFetch: AuthedFetch,
+  id: number,
+  payload: ApproveAlternatePayload,
+): Promise<{ request: RecordsQueueRequest }> {
+  return authedFetch<{ request: RecordsQueueRequest }>(`/records/requests/${id}/approve-alternate`, {
+    method: 'POST',
+    body: payload,
+  });
+}
+
+export interface DeclinePayload {
+  decline_reason_code: string;
+  decline_message?: string;
+  internal_note?: string;
+}
+
+// Declines a pending request — the requested slot is released, never
+// reassigned.
+export function declineRequest(
+  authedFetch: AuthedFetch,
+  id: number,
+  payload: DeclinePayload,
+): Promise<{ request: RecordsQueueRequest }> {
+  return authedFetch<{ request: RecordsQueueRequest }>(`/records/requests/${id}/decline`, {
+    method: 'POST',
+    body: payload,
+  });
+}
