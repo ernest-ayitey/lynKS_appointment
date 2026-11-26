@@ -2,7 +2,13 @@ import type { ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './auth-context';
 
-export function ProtectedRoute({ children }: { children: ReactNode }) {
+export function ProtectedRoute({
+  children,
+  allowedRoles,
+}: {
+  children: ReactNode;
+  allowedRoles?: string[];
+}) {
   const { status, user } = useAuth();
   const location = useLocation();
 
@@ -30,6 +36,14 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   // backend change outside this frontend plan's scope.
   if (user.must_change_password && location.pathname !== '/change-password') {
     return <Navigate to="/change-password" replace />;
+  }
+
+  // No dedicated "403" page exists yet, so a role-restricted page the
+  // user's role isn't allowed on just redirects home rather than showing
+  // one. A future plan can add a real forbidden page without changing
+  // this component's contract.
+  if (allowedRoles && !allowedRoles.includes(user.role)) {
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;

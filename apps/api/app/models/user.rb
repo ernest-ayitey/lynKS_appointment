@@ -3,6 +3,8 @@ require 'bcrypt'
 class User < Sequel::Model(:users)
   plugin :timestamps, update_on_create: true
 
+  one_to_one :doctor_profile
+
   ROLES = %w[patient doctor records admin].freeze
   STATUSES = %w[active invited locked deactivated].freeze
 
@@ -31,6 +33,17 @@ class User < Sequel::Model(:users)
 
   def deactivated?
     status == 'deactivated'
+  end
+
+  # The one definition of "a doctor patients are allowed to see": role
+  # 'doctor' and an account that is actually active, so a locked (5 failed
+  # logins) or deactivated doctor is excluded everywhere at once. Every
+  # patient-facing doctor lookup — the list, the per-doctor availability and
+  # slot endpoints, and `doctor_count` — composes this dataset rather than
+  # repeating the predicate, which is how `doctor_count` had drifted into
+  # counting locked doctors.
+  def self.active_doctors
+    where(role: 'doctor', status: 'active')
   end
 
   # Returns nil for anything that isn't a string, so a request body like

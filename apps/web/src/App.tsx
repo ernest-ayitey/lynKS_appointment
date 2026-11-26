@@ -6,6 +6,7 @@ import LoginPage from './features/auth/login.page';
 import RegisterPage from './features/auth/register.page';
 import ResetPasswordPage from './features/auth/reset-password.page';
 import RoleLandingPage from './features/dashboard/role-landing.page';
+import DoctorAvailabilityPage from './features/doctor/doctor-availability.page';
 import { AuthProvider } from './lib/auth-context';
 import { ErrorBoundary } from './lib/error-boundary';
 import { ProtectedRoute } from './lib/protected-route';
@@ -36,6 +37,14 @@ export default function App() {
                 element={
                   <ProtectedRoute>
                     <RoleLandingPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/doctor/availability"
+                element={
+                  <ProtectedRoute allowedRoles={['doctor']}>
+                    <DoctorAvailabilityPage />
                   </ProtectedRoute>
                 }
               />

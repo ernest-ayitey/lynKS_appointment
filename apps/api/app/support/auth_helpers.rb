@@ -23,4 +23,11 @@ module AuthHelpers
   def current_user
     @current_user ||= User[@current_user_id]
   end
+
+  # Call after `authenticate!` in a route's `before` block to restrict it to
+  # specific roles. Reads the already-memoized `current_user` rather than
+  # decoding the token a second time.
+  def require_role!(*roles)
+    halt 403, json(error: 'Forbidden') unless roles.include?(current_user.role)
+  end
 end

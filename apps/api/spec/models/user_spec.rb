@@ -34,4 +34,21 @@ RSpec.describe User do
     expect(user.deactivated?).to be true
     expect(user.locked?).to be false
   end
+
+  describe '.active_doctors' do
+    it 'includes only active doctors, excluding other roles and non-active statuses' do
+      active = User.create(role: 'doctor', username: 'docA', email: 'a@x.com',
+        first_name: 'A', last_name: 'B', password: 'Sup3r!word')
+      User.create(role: 'doctor', username: 'docL', email: 'l@x.com',
+        first_name: 'L', last_name: 'B', password: 'Sup3r!word', status: 'locked')
+      User.create(role: 'doctor', username: 'docD', email: 'd@x.com',
+        first_name: 'D', last_name: 'B', password: 'Sup3r!word', status: 'deactivated')
+      User.create(role: 'doctor', username: 'docI', email: 'i@x.com',
+        first_name: 'I', last_name: 'B', password: 'Sup3r!word', status: 'invited')
+      User.create(role: 'patient', username: 'pat', email: 'p@x.com',
+        first_name: 'P', last_name: 'B', password: 'Sup3r!word')
+
+      expect(User.active_doctors.select_map(:id)).to eq([active.id])
+    end
+  end
 end
