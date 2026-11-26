@@ -416,6 +416,37 @@ RSpec.describe 'GET /api/v1/records/queue' do
       expect(Appointment[target.id].status).to eq('pending')
     end
 
+    it 'undoes a declined request back to pending when its old slot is still free' do
+      target = create_appointment(status: 'declined', time: '09:00', decided_at: Time.now)
+
+      post_undo(records_token, target.id)
+      expect(last_response.status).to eq(200)
+      expect(Appointment[target.id].status).to eq('pending')
+    end
+
+    it 'rejects undoing a declined request with 422 when another appointment now occupies that exact slot' do
+      target = create_appointment(status: 'declined', time: '09:00', decided_at: Time.now)
+
+      other_patient = User.create(role: 'patient', username: 'patC', email: 'patc@x.com',
+        first_name: 'Other', last_name: 'Taker', password: 'Sup3r!word')
+      create_appointment(patient: other_patient, status: 'pending', time: '09:00')
+
+      post_undo(records_token, target.id)
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['error']).to eq('This time has already been booked')
+
+      row = Appointment[target.id]
+      expect(row.status).to eq('declined')
+    end
+
+    it "undoing an approved request is unaffected by self-exclusion — it already occupies its own slot" do
+      target = create_appointment(status: 'approved', time: '09:00', decided_at: Time.now)
+
+      post_undo(records_token, target.id)
+      expect(last_response.status).to eq(200)
+      expect(Appointment[target.id].status).to eq('pending')
+    end
+
     it 'rejects a request that is still pending, with 422, and sends no email' do
       allow(Mailer).to receive(:deliver)
       target = create_appointment(status: 'pending')

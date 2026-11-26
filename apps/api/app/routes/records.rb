@@ -276,20 +276,53 @@ class RecordsRoutes < ApiRoutes
   # Reverts a declined or approved request back to `pending`, clearing the
   # decision fields a prior `approve`/`approve-alternate`/`decline` wrote.
   # `internal_note` is deliberately left alone — it's Records' own working
-  # note on the request, not part of the decision being undone. No row lock
-  # is needed here: unlike `approve`/`decline`, there is no competing
-  # "someone else is deciding the same row right now" race to close — the
-  # only invalid state transition (undoing an already-`pending` request) is
-  # fully determined by the one plain read above. No email either — an undo
-  # is Records correcting their own mistake, not an event the patient or
-  # doctor needs to hear about.
+  # note on the request, not part of the decision being undone. No email
+  # either — an undo is Records correcting their own mistake, not an event
+  # the patient or doctor needs to hear about.
+  #
+  # `pending` is one of `Appointment::OCCUPYING_STATUSES`, so reverting to it
+  # re-occupies this row's (doctor_id, date, time) slot — exactly the same
+  # occupancy concern `approve-alternate` already has to guard against when
+  # moving a row onto a different slot. Unlike that route, `undo` doesn't
+  # pick a new slot; it's putting the row back on the slot it already has a
+  # historical claim to. But between this request having been declined/
+  # cancelled (which released the slot) and this undo call, some other
+  # appointment may have booked that exact slot in the meantime — nothing
+  # stops that, since declining frees the slot for anyone. So this needs the
+  # same transactional re-check/re-lock pattern as every other decision
+  # route here: re-read `status` under `for_update` (closing the same
+  # double-decide race `approve`/`decline` close), and also check whether
+  # some *other* row now occupies this slot (`.exclude(id: appointment.id)`
+  # is what makes that check safe for an `approved` row, which already
+  # legitimately occupies its own slot and must not find itself). Both
+  # outcomes are captured as flags and halted on only after the transaction
+  # closes, for the same `halt`-is-a-`throw` reason as every route above.
   post '/records/requests/:id/undo' do
     appointment = Appointment[params['id']]
     halt_json_error 404, NOT_FOUND_MESSAGE unless appointment
     halt_json_error 422, NOTHING_TO_UNDO_MESSAGE if appointment.status == 'pending'
 
-    appointment.update(status: 'pending', decided_at: nil, decided_by_user_id: nil,
-                        decline_reason_code: nil, decline_message: nil)
+    already_pending = false
+    occupied = false
+    DB.transaction do
+      appointment = Appointment.where(id: appointment.id).for_update.first
+      if appointment.status == 'pending'
+        already_pending = true
+      else
+        occupied = !Appointment.where(doctor_id: appointment.doctor_id, date: appointment.date,
+                                       time: appointment.time, status: Appointment::OCCUPYING_STATUSES)
+                                .exclude(id: appointment.id)
+                                .for_update
+                                .empty?
+        unless occupied
+          appointment.update(status: 'pending', decided_at: nil, decided_by_user_id: nil,
+                              decline_reason_code: nil, decline_message: nil)
+        end
+      end
+    end
+    halt_json_error 422, NOTHING_TO_UNDO_MESSAGE if already_pending
+    halt_json_error 422, TIME_ALREADY_BOOKED_MESSAGE if occupied
+
     json(request: request_json(appointment))
   end
 
