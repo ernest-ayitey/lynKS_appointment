@@ -675,9 +675,15 @@ export interface RecordsQueueRequest {
   department: { id: number; name: string };
   date: string;
   time: string;
+  duration_minutes: number;
   visit_type: string;
+  reason: string;
   status: string;
   submitted_at: string;
+  decided_at: string | null;
+  decline_reason_code: string | null;
+  decline_message: string | null;
+  internal_note: string | null;
 }
 
 export interface RecordsQueueFilters {
