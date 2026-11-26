@@ -44,6 +44,35 @@ describe('RoleLandingPage', () => {
     expect(screen.queryByRole('link', { name: /availability/i })).not.toBeInTheDocument();
   });
 
+  it('renders links to book an appointment and my appointments pages when the user is a patient', () => {
+    useAuth.mockReturnValue({
+      user: { role: 'patient', first_name: 'John', last_name: 'Doe' },
+      logout,
+    });
+
+    renderPage();
+
+    const bookLink = screen.getByRole('link', { name: /book an appointment/i });
+    expect(bookLink).toBeInTheDocument();
+    expect(bookLink).toHaveAttribute('href', '/book');
+
+    const appointmentsLink = screen.getByRole('link', { name: /my appointments/i });
+    expect(appointmentsLink).toBeInTheDocument();
+    expect(appointmentsLink).toHaveAttribute('href', '/appointments');
+  });
+
+  it('does not render patient links when the user is not a patient', () => {
+    useAuth.mockReturnValue({
+      user: { role: 'doctor', first_name: 'Jane', last_name: 'Smith' },
+      logout,
+    });
+
+    renderPage();
+
+    expect(screen.queryByRole('link', { name: /book an appointment/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /my appointments/i })).not.toBeInTheDocument();
+  });
+
   it('renders the sign in information and logout button for all roles', async () => {
     useAuth.mockReturnValue({
       user: { role: 'patient', first_name: 'John', last_name: 'Doe' },

@@ -5,6 +5,7 @@ require 'rack/cascade'
 require_relative 'routes/health'
 require_relative 'routes/auth'
 require_relative 'routes/doctors'
+require_relative 'routes/appointments'
 
 # Each mounted route class defines its own routes relative to '/api/v1'
 # (e.g. HealthRoutes#'/health' handles 'GET /api/v1/health'). Add new route
@@ -12,7 +13,8 @@ require_relative 'routes/doctors'
 MOUNTED_ROUTES = [
   HealthRoutes,
   AuthRoutes,
-  DoctorRoutes
+  DoctorRoutes,
+  AppointmentRoutes
 ].freeze
 
 class App < Sinatra::Base

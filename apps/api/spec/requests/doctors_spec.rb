@@ -340,11 +340,24 @@ RSpec.describe 'GET /api/v1/doctors/:id/slots' do
   end
 
   it 'defaults to today when the date param is omitted' do
-    DoctorAvailabilityDay.create(user_id: doctor.id, date: Date.today)
+    today = Date.today
+    DoctorAvailabilityDay.create(user_id: doctor.id, date: today)
+    token = TokenService.issue_access_token(patient)
 
-    get_slots(TokenService.issue_access_token(patient), doctor.id)
+    # Compared against the equivalent explicit-date call rather than
+    # asserting a specific slot value: once already-passed-today slots
+    # are filtered out (covered separately below), which slot is first
+    # depends on the wall-clock time the suite happens to run at. This
+    # example's actual point — that an omitted `date` behaves exactly
+    # like `date=today` — doesn't need that value pinned down.
+    get_slots(token, doctor.id)
+    omitted_date_slots = JSON.parse(last_response.body)['slots']
     expect(last_response.status).to eq(200)
-    expect(JSON.parse(last_response.body)['slots'].first).to eq('09:00')
+
+    get_slots(token, doctor.id, date: today.iso8601)
+    explicit_date_slots = JSON.parse(last_response.body)['slots']
+
+    expect(omitted_date_slots).to eq(explicit_date_slots)
   end
 
   it 'rejects an unparseable date with 422' do
@@ -371,5 +384,93 @@ RSpec.describe 'GET /api/v1/doctors/:id/slots' do
 
     get_slots(TokenService.issue_access_token(patient), deactivated_doctor.id, date: '2027-01-05')
     expect(last_response.status).to eq(404)
+  end
+
+  describe 'excluding occupied slots' do
+    let!(:department) { Department.create(name: 'Cardiology') }
+
+    def create_appointment(status:, time: '09:00')
+      Appointment.create(
+        patient_id: patient.id, doctor_id: doctor.id, department_id: department.id,
+        date: Date.iso8601(available_date), time: time, duration_minutes: 20,
+        visit_type: 'new_consultation', reason: 'Existing', status: status, submitted_at: Time.now
+      )
+    end
+
+    it 'returns every generated slot when there are no appointments' do
+      get_slots(TokenService.issue_access_token(patient), doctor.id, date: available_date)
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['slots'].length).to eq(24)
+    end
+
+    it 'excludes the one slot held by a pending appointment' do
+      create_appointment(status: 'pending', time: '09:20')
+
+      get_slots(TokenService.issue_access_token(patient), doctor.id, date: available_date)
+      slots = JSON.parse(last_response.body)['slots']
+      expect(slots).not_to include('09:20')
+      expect(slots.length).to eq(23)
+    end
+
+    it 'excludes the one slot held by an approved appointment' do
+      create_appointment(status: 'approved', time: '09:40')
+
+      get_slots(TokenService.issue_access_token(patient), doctor.id, date: available_date)
+      slots = JSON.parse(last_response.body)['slots']
+      expect(slots).not_to include('09:40')
+      expect(slots.length).to eq(23)
+    end
+
+    %w[declined cancelled].each do |status|
+      it "still includes the slot when the only appointment there is #{status}" do
+        create_appointment(status: status, time: '10:00')
+
+        get_slots(TokenService.issue_access_token(patient), doctor.id, date: available_date)
+        slots = JSON.parse(last_response.body)['slots']
+        expect(slots).to include('10:00')
+        expect(slots.length).to eq(24)
+      end
+    end
+  end
+
+  describe 'excluding already-passed slots for today' do
+    it "excludes today's slots at or before the current time but keeps later-today slots" do
+      today = Date.today
+      DoctorAvailabilityDay.create(user_id: doctor.id, date: today)
+
+      # A full 24-hour, 1-minute-slot schedule so this example always has
+      # both an already-passed and a still-ahead slot to check against the
+      # real wall-clock time the suite happens to run at — no hardcoded
+      # clock value, and no risk of the default 09:00-17:00 window simply
+      # not covering "now" (e.g. a 2am test run).
+      put_session_settings(
+        TokenService.issue_access_token(doctor),
+        { start_time: '00:00', end_time: '23:59', slot_length_minutes: 1,
+          max_patients_per_day: nil, break_start: nil, break_end: nil }
+      )
+      expect(last_response.status).to eq(200)
+
+      now_minutes = (Time.now.hour * 60) + Time.now.min
+      past_minute = [now_minutes - 5, 0].max
+      future_minute = [now_minutes + 5, 1438].min
+      past_time = format('%02d:%02d', past_minute / 60, past_minute % 60)
+      future_time = format('%02d:%02d', future_minute / 60, future_minute % 60)
+
+      get_slots(TokenService.issue_access_token(patient), doctor.id, date: today.iso8601)
+      expect(last_response.status).to eq(200)
+      slots = JSON.parse(last_response.body)['slots']
+
+      expect(slots).not_to include(past_time)
+      expect(slots).to include(future_time)
+    end
+
+    it "still returns the full slot list for a future date, unaffected by the current time" do
+      future_date = Date.today + 5
+      DoctorAvailabilityDay.create(user_id: doctor.id, date: future_date)
+
+      get_slots(TokenService.issue_access_token(patient), doctor.id, date: future_date.iso8601)
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['slots'].length).to eq(24)
+    end
   end
 end
