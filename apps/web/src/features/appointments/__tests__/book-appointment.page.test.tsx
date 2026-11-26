@@ -229,6 +229,26 @@ describe('BookAppointmentPage', () => {
     expect(getSlots).not.toHaveBeenCalled();
   });
 
+  it('keeps the submit button disabled until a doctor, day, and time are all selected', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForInitialLoad();
+
+    const submitButton = screen.getByRole('button', { name: /book appointment/i });
+    expect(submitButton).toBeDisabled();
+
+    await user.selectOptions(screen.getByLabelText(/doctor/i), '10');
+    await screen.findByRole('button', { name: availableDay });
+    expect(submitButton).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: availableDay }));
+    await screen.findByRole('button', { name: '09:00' });
+    expect(submitButton).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: '09:00' }));
+    expect(submitButton).toBeEnabled();
+  });
+
   it('submits the exact backend payload shape and navigates to /appointments on success', async () => {
     bookAppointment.mockResolvedValueOnce({ id: 1 });
     const user = userEvent.setup();
