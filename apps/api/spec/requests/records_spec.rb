@@ -140,4 +140,168 @@ RSpec.describe 'GET /api/v1/records/queue' do
       expect(last_response.status).to eq(403)
     end
   end
+
+  def post_approve(token, id, body = {})
+    post "/api/v1/records/requests/#{id}/approve", body.to_json,
+         { 'HTTP_AUTHORIZATION' => "Bearer #{token}", 'CONTENT_TYPE' => 'application/json' }
+  end
+
+  def post_approve_alternate(token, id, body = {})
+    post "/api/v1/records/requests/#{id}/approve-alternate", body.to_json,
+         { 'HTTP_AUTHORIZATION' => "Bearer #{token}", 'CONTENT_TYPE' => 'application/json' }
+  end
+
+  # Relative to today, same reasoning as appointments_spec.rb's
+  # `available_date`: this endpoint actively enforces the booking window, so
+  # a hardcoded date would start failing once the calendar passed it.
+  let!(:alternate_date) do
+    date = Date.today + 15
+    DoctorAvailabilityDay.create(user_id: doctor.id, date: date)
+    date.iso8601
+  end
+
+  describe 'POST /records/requests/:id/approve' do
+    it 'approves a pending request, sets decided_at/decided_by, and emails patient+doctor' do
+      deliveries = []
+      allow(Mailer).to receive(:deliver) { |args| deliveries << args }
+
+      target = create_appointment(status: 'pending')
+
+      post_approve(records_token, target.id)
+      expect(last_response.status).to eq(200)
+
+      body = JSON.parse(last_response.body)
+      expect(body['request']['status']).to eq('approved')
+
+      row = Appointment[target.id]
+      expect(row.status).to eq('approved')
+      expect(row.decided_at).not_to be_nil
+      expect(row.decided_by_user_id).to eq(records_user.id)
+
+      expect(deliveries.size).to eq(2)
+      expect(deliveries.map { |d| d[:to] }).to contain_exactly(patient.email, doctor.email)
+    end
+
+    it 'stores internal_note when given' do
+      target = create_appointment(status: 'pending')
+      post_approve(records_token, target.id, internal_note: 'Checked insurance')
+      expect(last_response.status).to eq(200)
+      expect(Appointment[target.id].internal_note).to eq('Checked insurance')
+    end
+
+    it 'returns 404 for a nonexistent id' do
+      post_approve(records_token, 999_999)
+      expect(last_response.status).to eq(404)
+    end
+
+    %w[approved declined cancelled].each do |status|
+      it "rejects a request that is already #{status}, with 422, and sends no email" do
+        allow(Mailer).to receive(:deliver)
+        target = create_appointment(status: status, decided_at: Time.now)
+
+        post_approve(records_token, target.id)
+        expect(last_response.status).to eq(422)
+        expect(JSON.parse(last_response.body)['error']).to eq('This request has already been decided')
+        expect(Mailer).not_to have_received(:deliver)
+      end
+    end
+
+    %w[patient doctor].each do |role|
+      it "rejects a #{role} role with 403" do
+        other = User.create(role: role, username: "u#{role}appr", email: "#{role}appr@x.com",
+          first_name: 'O', last_name: 'T', password: 'Sup3r!word')
+        target = create_appointment(status: 'pending')
+        post_approve(TokenService.issue_access_token(other), target.id)
+        expect(last_response.status).to eq(403)
+      end
+    end
+  end
+
+  describe 'POST /records/requests/:id/approve-alternate' do
+    it 'moves the request to the given date/time and approves it, emailing patient+doctor with the NEW slot' do
+      deliveries = []
+      allow(Mailer).to receive(:deliver) { |args| deliveries << args }
+
+      target = create_appointment(status: 'pending', time: '09:00')
+
+      post_approve_alternate(records_token, target.id, date: alternate_date, time: '10:00')
+      expect(last_response.status).to eq(200)
+
+      body = JSON.parse(last_response.body)
+      expect(body['request']).to include('status' => 'approved', 'date' => alternate_date, 'time' => '10:00')
+
+      row = Appointment[target.id]
+      expect(row.status).to eq('approved')
+      expect(row.date.iso8601).to eq(alternate_date)
+      expect(row.time).to eq('10:00')
+      expect(row.decided_at).not_to be_nil
+      expect(row.decided_by_user_id).to eq(records_user.id)
+
+      expect(deliveries.size).to eq(2)
+      expect(deliveries.map { |d| d[:to] }).to contain_exactly(patient.email, doctor.email)
+      deliveries.each do |delivery|
+        expect(delivery[:body]).to include(alternate_date)
+        expect(delivery[:body]).to include('10:00')
+      end
+    end
+
+    it 'rejects an alternate slot already held by another appointment, with 422 on `time`' do
+      other_patient = User.create(role: 'patient', username: 'patB', email: 'patb@x.com',
+        first_name: 'Other', last_name: 'Patient', password: 'Sup3r!word')
+      create_appointment(patient: other_patient, status: 'approved', date: Date.iso8601(alternate_date), time: '10:00')
+
+      target = create_appointment(status: 'pending', time: '09:00')
+
+      post_approve_alternate(records_token, target.id, date: alternate_date, time: '10:00')
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['errors']).to have_key('time')
+
+      row = Appointment[target.id]
+      expect(row.status).to eq('pending')
+      expect(row.time).to eq('09:00')
+    end
+
+    it 'rejects a malformed or unavailable alternate date/time with field-level 422s' do
+      target = create_appointment(status: 'pending', time: '09:00')
+
+      post_approve_alternate(records_token, target.id, date: 'not-a-date', time: '10:00')
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['errors']).to have_key('date')
+
+      post_approve_alternate(records_token, target.id, date: alternate_date, time: '23:45')
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['errors']).to have_key('time')
+
+      unavailable_date = (Date.today + 16).iso8601
+      post_approve_alternate(records_token, target.id, date: unavailable_date, time: '10:00')
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['errors']).to have_key('date')
+
+      row = Appointment[target.id]
+      expect(row.status).to eq('pending')
+      expect(row.time).to eq('09:00')
+    end
+
+    it 'returns 404 for a nonexistent id' do
+      post_approve_alternate(records_token, 999_999, date: alternate_date, time: '10:00')
+      expect(last_response.status).to eq(404)
+    end
+
+    it 'rejects a request that is already decided, with 422' do
+      target = create_appointment(status: 'approved', decided_at: Time.now)
+      post_approve_alternate(records_token, target.id, date: alternate_date, time: '10:00')
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['error']).to eq('This request has already been decided')
+    end
+
+    %w[patient doctor].each do |role|
+      it "rejects a #{role} role with 403" do
+        other = User.create(role: role, username: "u#{role}alt", email: "#{role}alt@x.com",
+          first_name: 'O', last_name: 'T', password: 'Sup3r!word')
+        target = create_appointment(status: 'pending')
+        post_approve_alternate(TokenService.issue_access_token(other), target.id, date: alternate_date, time: '10:00')
+        expect(last_response.status).to eq(403)
+      end
+    end
+  end
 end

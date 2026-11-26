@@ -1,6 +1,7 @@
 require 'json'
 require 'date'
 require_relative 'api_base'
+require_relative 'doctors'
 
 # Routes mounted at '/api/v1' for the `records` staff role's approval queue.
 # This task adds the two read-only routes (`GET /records/queue` and
@@ -14,6 +15,24 @@ class RecordsRoutes < ApiRoutes
   NOT_FOUND_MESSAGE = 'Not found'
   QUEUE_STATUSES = %w[pending approved declined cancelled].freeze
 
+  # Shared by every decision route (`approve`, `approve-alternate`, and
+  # Task 4's `decline`/`undo`): the request has already left the `pending`
+  # status, so there is nothing left for this decision to do.
+  ALREADY_DECIDED_MESSAGE = 'This request has already been decided'
+
+  # Field-level validation messages for `approve-alternate`'s target
+  # date/time. This file's own copies of appointments.rb's identically
+  # worded constants, per the established duplication-over-sharing
+  # convention between these route files (see the comment on
+  # `parse_booking_date` below).
+  ISO_DATE = /\A\d{4}-\d{2}-\d{2}\z/
+  DATE_INVALID_MESSAGE = 'Enter a valid date (YYYY-MM-DD)'
+  DATE_OUT_OF_RANGE_MESSAGE = "Date must be today or within #{DoctorRoutes::MAX_BOOKING_WINDOW_DAYS} days from today".freeze
+  DATE_UNAVAILABLE_MESSAGE = 'Doctor is not available on this date'
+  TIME_UNAVAILABLE_MESSAGE = 'This time is not available'
+  TIME_IN_PAST_MESSAGE = 'This time has already passed today'
+  TIME_ALREADY_BOOKED_MESSAGE = 'This time has already been booked'
+
   # Path-scoped rather than a blanket `before`, for the same Rack::Cascade
   # reason explained in doctors.rb's header comment: a request for a path
   # this file doesn't define must still be able to fall through to the next
@@ -24,6 +43,38 @@ class RecordsRoutes < ApiRoutes
   # prefix, so this has to be listed separately from the filter above — same
   # established house style as doctors.rb/appointments.rb.
   before('/records/requests/:id') { authenticate!; require_role!('records') }
+
+  # Two more distinct literal paths, per the same `before 'path'`-is-not-a-
+  # prefix reasoning above: neither of the two filters above runs for these.
+  before('/records/requests/:id/approve') { authenticate!; require_role!('records') }
+  before('/records/requests/:id/approve-alternate') { authenticate!; require_role!('records') }
+
+  # Both decision routes above take a JSON body, so each gets its own copy
+  # of the same body-parsing filter appointments.rb/doctors.rb use — one per
+  # literal path, since (as above) `before 'path'` isn't a prefix match.
+  before('/records/requests/:id/approve') do
+    if request.body
+      request.body.rewind
+      parsed = JSON.parse(request.body.read)
+      @payload = parsed.is_a?(Hash) ? parsed : {}
+    else
+      @payload = {}
+    end
+  rescue JSON::ParserError
+    @payload = {}
+  end
+
+  before('/records/requests/:id/approve-alternate') do
+    if request.body
+      request.body.rewind
+      parsed = JSON.parse(request.body.read)
+      @payload = parsed.is_a?(Hash) ? parsed : {}
+    else
+      @payload = {}
+    end
+  rescue JSON::ParserError
+    @payload = {}
+  end
 
   # The approval queue: defaults to `pending` requests, narrowable by
   # `status` (one of QUEUE_STATUSES), `doctor_id` (exact match), and
@@ -64,9 +115,209 @@ class RecordsRoutes < ApiRoutes
     )
   end
 
+  # Approves a pending request at its originally requested date/time —
+  # see the file comment above `occupied_slot?`-style re-checks in
+  # appointments.rb's `POST /appointments` for why the `status == 'pending'`
+  # check has to happen twice: once here (a cheap early exit for the common
+  # case), and once more below with a row lock held, inside the transaction,
+  # which is the check that actually closes the race between two records
+  # users deciding the same request at once. `halt` is deliberately called
+  # *after* the transaction block, not inside it — same reasoning as
+  # appointments.rb: `halt` works by `throw`, not by raising, so throwing
+  # through a transaction would leave Sequel's commit/rollback decision to
+  # chance.
+  post '/records/requests/:id/approve' do
+    appointment = Appointment[params['id']]
+    halt_json_error 404, NOT_FOUND_MESSAGE unless appointment
+    halt_json_error 422, ALREADY_DECIDED_MESSAGE unless appointment.status == 'pending'
+
+    already_decided = false
+    DB.transaction do
+      appointment = Appointment.where(id: appointment.id).for_update.first
+      if appointment.status == 'pending'
+        appointment.update(status: 'approved', decided_at: Time.now, decided_by_user_id: current_user.id,
+                            internal_note: @payload['internal_note'] || appointment.internal_note)
+      else
+        already_decided = true
+      end
+    end
+    halt_json_error 422, ALREADY_DECIDED_MESSAGE if already_decided
+
+    deliver_approved_emails(appointment)
+    json(request: request_json(appointment))
+  end
+
+  # Approves a pending request onto a *different* date/time than originally
+  # requested. The date/time validation below (well-formed, doctor available
+  # that day, a real generated slot, not already past if same-day, within
+  # the booking window) mirrors `POST /appointments`'s own validation
+  # one-for-one and halts directly, the same way `POST /appointments` does
+  # for these same checks — none of them depend on a row lock, so there is
+  # no concurrency reason to defer them into the transaction below.
+  #
+  # The transaction below re-checks `status == 'pending'` under a row lock
+  # (closing the double-decide race, same as `approve` above) and *also*
+  # checks whether the target slot is already held by some other
+  # appointment — `.exclude(id: appointment.id)` is what makes that check
+  # safe to run even though this exact row already occupies its *old* slot;
+  # without the exclusion it would always find itself and could never pass.
+  # Both outcomes are captured as flags and only halted on after the
+  # transaction closes, for the same `halt`-is-a-`throw` reason as above.
+  post '/records/requests/:id/approve-alternate' do
+    appointment = Appointment[params['id']]
+    halt_json_error 404, NOT_FOUND_MESSAGE unless appointment
+    halt_json_error 422, ALREADY_DECIDED_MESSAGE unless appointment.status == 'pending'
+
+    date = parse_booking_date(@payload['date'])
+    halt_json_error 422, VALIDATION_FAILED_MESSAGE, date: DATE_INVALID_MESSAGE if date.nil?
+
+    today = Date.today
+    if date < today || date > today + DoctorRoutes::MAX_BOOKING_WINDOW_DAYS
+      halt_json_error 422, VALIDATION_FAILED_MESSAGE, date: DATE_OUT_OF_RANGE_MESSAGE
+    end
+
+    doctor = appointment.doctor
+    halt_json_error 422, VALIDATION_FAILED_MESSAGE, date: DATE_UNAVAILABLE_MESSAGE unless available_day?(doctor, date)
+
+    settings = DoctorSessionSettings.first(user_id: doctor.id)
+    slots = generate_slots(settings)
+    time_param = @payload['time']
+    unless time_param.is_a?(String) && slots.include?(time_param)
+      halt_json_error 422, VALIDATION_FAILED_MESSAGE, time: TIME_UNAVAILABLE_MESSAGE
+    end
+
+    if date == today && parse_time_of_day(time_param) <= current_minute_of_day
+      halt_json_error 422, VALIDATION_FAILED_MESSAGE, time: TIME_IN_PAST_MESSAGE
+    end
+
+    already_decided = false
+    occupied = false
+    DB.transaction do
+      appointment = Appointment.where(id: appointment.id).for_update.first
+      if appointment.status != 'pending'
+        already_decided = true
+      else
+        occupied = !Appointment.where(doctor_id: appointment.doctor_id, date: date, time: time_param,
+                                       status: Appointment::OCCUPYING_STATUSES)
+                                .exclude(id: appointment.id)
+                                .for_update
+                                .empty?
+        unless occupied
+          appointment.update(date: date, time: time_param, status: 'approved', decided_at: Time.now,
+                              decided_by_user_id: current_user.id,
+                              internal_note: @payload['internal_note'] || appointment.internal_note)
+        end
+      end
+    end
+    halt_json_error 422, ALREADY_DECIDED_MESSAGE if already_decided
+    halt_json_error 422, VALIDATION_FAILED_MESSAGE, time: TIME_ALREADY_BOOKED_MESSAGE if occupied
+
+    deliver_approved_emails(appointment)
+    json(request: request_json(appointment))
+  end
+
   helpers do
     def ref_for(appointment)
       format('REQ-%05d', appointment.id)
+    end
+
+    # Builds and sends the two emails an approval (original slot or
+    # alternate) always triggers: one to the doctor whose schedule just
+    # gained an appointment, one to the patient telling them it was
+    # approved. Field lists per screen-specs.md:176-179 (EmailDoctor /
+    # EmailPatient): the doctor's email names the patient/date/time/visit
+    # type/reason/who approved it; the patient's names the doctor/date/
+    # time/where/reference. Always reflects `appointment`'s *current*
+    # date/time, so a caller that already moved it onto an alternate slot
+    # before calling this (as `approve-alternate` does) emails the new
+    # slot, not the original request's.
+    def deliver_approved_emails(appointment)
+      doctor = appointment.doctor
+      patient = appointment.patient
+      department = Department[appointment.department_id]
+
+      Mailer.deliver(
+        to: doctor.email,
+        subject: 'New appointment added to your schedule',
+        body: "Patient: #{patient.first_name} #{patient.last_name}\n" \
+              "Date: #{appointment.date.iso8601}\n" \
+              "Time: #{appointment.time}\n" \
+              "Visit type: #{appointment.visit_type}\n" \
+              "Reason: #{appointment.reason}\n" \
+              "Approved by: #{current_user.first_name} #{current_user.last_name}"
+      )
+
+      Mailer.deliver(
+        to: patient.email,
+        subject: 'Your appointment has been approved',
+        body: "Doctor: #{doctor.first_name} #{doctor.last_name}\n" \
+              "Date: #{appointment.date.iso8601}\n" \
+              "Time: #{appointment.time}\n" \
+              "Where: #{department.name}\n" \
+              "Reference: #{ref_for(appointment)}"
+      )
+    end
+
+    # Mirrors appointments.rb's `parse_booking_date` — kept as a small,
+    # obviously-duplicated copy per this file's established convention
+    # rather than a shared helpers module, since `AppointmentRoutes`'
+    # version is a private instance method on a different route class.
+    # Keep the two in sync by hand if either changes.
+    def parse_booking_date(value)
+      return nil unless value.is_a?(String) && ISO_DATE.match?(value)
+
+      Date.iso8601(value)
+    rescue ArgumentError
+      nil
+    end
+
+    # Mirrors appointments.rb's `available_day?` — see the comment on
+    # `parse_booking_date` above for why this is duplicated rather than
+    # shared.
+    def available_day?(user, date)
+      !DoctorAvailabilityDay.where(user_id: user.id, date: date, is_available: true).empty?
+    end
+
+    # Mirrors appointments.rb's `generate_slots` — see the comment on
+    # `parse_booking_date` above for why this is duplicated rather than
+    # shared.
+    def generate_slots(settings)
+      start_minutes = parse_time_of_day(settings&.start_time || DoctorRoutes::DEFAULT_SESSION_SETTINGS[:start_time])
+      end_minutes = parse_time_of_day(settings&.end_time || DoctorRoutes::DEFAULT_SESSION_SETTINGS[:end_time])
+      slot_length_minutes = settings&.slot_length_minutes || DoctorRoutes::DEFAULT_SESSION_SETTINGS[:slot_length_minutes]
+      break_start_minutes = settings&.break_start ? parse_time_of_day(settings.break_start) : nil
+      break_end_minutes = settings&.break_end ? parse_time_of_day(settings.break_end) : nil
+
+      slots = []
+      minute = start_minutes
+      while minute < end_minutes
+        in_break = break_start_minutes && break_end_minutes &&
+                   minute >= break_start_minutes && minute < break_end_minutes
+        slots << format('%02d:%02d', minute / 60, minute % 60) unless in_break
+        minute += slot_length_minutes
+      end
+      slots
+    end
+
+    # Mirrors appointments.rb's `parse_time_of_day` — see the comment on
+    # `parse_booking_date` above for why this is duplicated rather than
+    # shared.
+    def parse_time_of_day(value)
+      return nil unless value.is_a?(String)
+
+      match = DoctorRoutes::TIME_OF_DAY.match(value)
+      return nil unless match
+
+      (match[1].to_i * 60) + match[2].to_i
+    end
+
+    # The current minute-of-day (0-1439), for comparing against a parsed
+    # "HH:MM" slot when deciding whether a same-day alternate slot is still
+    # ahead of the clock. Uses `Time.now` (wall clock), not `Date.today`.
+    # Mirrors appointments.rb's `current_minute_of_day`.
+    def current_minute_of_day
+      now = Time.now
+      (now.hour * 60) + now.min
     end
 
     # `department:` mirrors Task 1's `appointment_json(appointment,
