@@ -45,7 +45,7 @@ export default function LoginPage() {
     <AuthSplitLayout>
       <div className="flex w-full max-w-[400px] flex-col gap-5 rounded-xl border border-slate-300 bg-white p-8">
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-2xl text-slate-900">Sign in</h1>
+          <h2 className="text-2xl text-slate-900">Sign in</h2>
           <p className="text-sm text-slate-500">
             Patients, doctors, records and admin staff all sign in here.
           </p>
