@@ -20,5 +20,11 @@ class Appointment < Sequel::Model(:appointments)
     super
     validates_includes STATUSES, :status
     validates_includes DECLINE_REASON_CODES, :decline_reason_code, allow_nil: true
+    # Both columns are VARCHAR(255); without this, a message over 255
+    # characters either raises a DB error under MySQL strict mode or gets
+    # truncated silently — possibly mid-sentence inside a patient-facing
+    # email.
+    validates_max_length 255, :decline_message, allow_nil: true
+    validates_max_length 255, :internal_note, allow_nil: true
   end
 end

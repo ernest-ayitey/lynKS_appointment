@@ -449,6 +449,7 @@ export default function RequestReviewPage() {
                   <textarea
                     id="declineMessage"
                     rows={3}
+                    maxLength={255}
                     className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                     {...register('declineMessage')}
                   />
@@ -466,6 +467,7 @@ export default function RequestReviewPage() {
               <textarea
                 id="internalNote"
                 rows={2}
+                maxLength={255}
                 className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                 {...register('internalNote')}
               />

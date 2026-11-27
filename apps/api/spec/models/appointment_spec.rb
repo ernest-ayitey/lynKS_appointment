@@ -81,4 +81,22 @@ RSpec.describe Appointment do
     pending_one = build_appointment(status: 'pending', decline_reason_code: nil)
     expect(pending_one).to be_valid
   end
+
+  # `decline_message`/`internal_note` are VARCHAR(255) columns with no
+  # length validation previously — a message over 255 characters either
+  # raised a DB error under MySQL strict mode or got truncated silently.
+  %i[decline_message internal_note].each do |field|
+    it "rejects a 256-character #{field} but allows a 255-character one" do
+      too_long = build_appointment(field => 'a' * 256)
+      expect(too_long).not_to be_valid
+      expect(too_long.errors[field]).not_to be_empty
+
+      exactly_255 = build_appointment(field => 'a' * 255)
+      expect(exactly_255).to be_valid
+    end
+
+    it "allows a nil #{field}" do
+      expect(build_appointment(field => nil)).to be_valid
+    end
+  end
 end
