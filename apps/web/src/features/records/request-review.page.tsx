@@ -187,9 +187,21 @@ export default function RequestReviewPage() {
     return Boolean(declineReasonCode);
   }, [decision, altDate, altTime, declineReasonCode]);
 
+  const relevantDate = decision === 'approve_alternate' && altDate ? altDate : requestDetail?.date;
   const relevantTime = decision === 'approve_alternate' && altTime ? altTime : requestDetail?.time;
   const relevantFreeTimes = decision === 'approve_alternate' && altTime ? altFreeTimes : requestedFreeTimes;
-  const noConflicts = relevantTime ? relevantFreeTimes.includes(relevantTime) : false;
+
+  // `GET /doctors/:id/slots` excludes every time held by an *occupying*
+  // appointment — including this very (still-pending) request's own slot.
+  // So membership-testing the originally requested slot against its own
+  // free-times list is always false, which would always read as a
+  // conflict even though re-approving a request at its own slot can never
+  // conflict with itself. Only a genuinely different (alternate) slot
+  // needs the plain membership check below — this flag is true whenever
+  // the slot under consideration is the request's own, regardless of
+  // which decision is currently selected.
+  const isOwnSlot = relevantDate === requestDetail?.date && relevantTime === requestDetail?.time;
+  const noConflicts = relevantTime ? isOwnSlot || relevantFreeTimes.includes(relevantTime) : false;
 
   async function onSubmit(data: DecisionFormValues) {
     if (!requestDetail) return;
@@ -329,7 +341,11 @@ export default function RequestReviewPage() {
           <p className="text-sm text-slate-700">
             Requested: {requestDetail.date} at {requestDetail.time} —{' '}
             <span data-testid="requested-slot-badge">
-              {requestedFreeTimes.includes(requestDetail.time) ? 'Free' : 'Booked'}
+              {/* Always "Free": the backend's free-times list excludes this
+                  very request's own slot by design (see `isOwnSlot`
+                  above), so a plain membership check here would always
+                  read "Booked". */}
+              Free
             </span>
           </p>
           {decision === 'approve_alternate' && altDate && altTime && (

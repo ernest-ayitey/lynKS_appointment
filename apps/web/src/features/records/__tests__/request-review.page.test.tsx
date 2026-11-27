@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -90,7 +90,13 @@ describe('RequestReviewPage', () => {
       patient_stats: patientStatsFixture(),
     });
     getPublicAvailability.mockResolvedValue({ days: [REQUESTED_DATE] });
-    getSlots.mockResolvedValue({ slots: ['09:00', '10:00'] });
+    // The backend's `GET /doctors/:id/slots` excludes every time held by an
+    // *occupying* appointment — including this very (still-pending)
+    // request's own slot (09:00). So a free-times fixture that included
+    // 09:00 would be a state the real backend can never produce for a
+    // pending request under review; 10:00/11:00 (two OTHER, genuinely free
+    // times) is the realistic default.
+    getSlots.mockResolvedValue({ slots: ['10:00', '11:00'] });
   });
 
   it('fetches the request detail on load and renders the header, requested-appointment dl, and patient stats', async () => {
@@ -353,27 +359,57 @@ describe('RequestReviewPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Validation failed');
   });
 
-  it('shows the conflict line when the requested time is NOT in the free-times list', async () => {
-    getSlots.mockResolvedValue({ slots: ['10:00'] }); // 09:00 (the requested time) is NOT free
+  it('shows the no-conflicts line for the requested slot even though the backend excludes it from free-times (self-exception)', async () => {
+    // The default mock (set in beforeEach) never includes 09:00 — the
+    // requested time — because the real backend never would either, for
+    // exactly this reason. The requested slot's own membership check must
+    // not be the thing deciding this line; re-approving a request at its
+    // own slot can never conflict with itself.
     renderPage();
     await screen.findByTestId('request-ref');
 
     await waitFor(() => expect(getSlots).toHaveBeenCalledWith(authedFetch, 10, REQUESTED_DATE));
-    // Regex picked so it can only match the booked-branch string — both
-    // branches' text contain the substring "conflict" ("No conflicts..."
-    // and "Conflict..."), so a bare /conflict/i here would pass no matter
-    // which branch actually rendered.
-    expect(screen.getByTestId('no-conflicts-line')).toHaveTextContent(/already booked/i);
-    expect(screen.getByTestId('no-conflicts-line')).not.toHaveTextContent(/this time is free/i);
-  });
-
-  it('shows the no-conflicts line when the requested time IS in the free-times list', async () => {
-    getSlots.mockResolvedValue({ slots: ['09:00', '10:00'] }); // 09:00 (the requested time) is free
-    renderPage();
-    await screen.findByTestId('request-ref');
-
-    await waitFor(() => expect(getSlots).toHaveBeenCalledWith(authedFetch, 10, REQUESTED_DATE));
+    // Regex picked so it can only match the no-conflict-branch string —
+    // both branches' text contain the substring "conflict" ("No
+    // conflicts..." and "Conflict..."), so a bare /conflict/i here would
+    // pass no matter which branch actually rendered.
     expect(screen.getByTestId('no-conflicts-line')).toHaveTextContent(/this time is free/i);
     expect(screen.getByTestId('no-conflicts-line')).not.toHaveTextContent(/already booked/i);
+  });
+
+  it('shows a conflict line for a genuinely unavailable alternate slot on a closed/unavailable day', async () => {
+    // The requested date keeps the default (free: 10:00/11:00) mock; the
+    // alternate date is a genuinely closed day with zero free times at
+    // all, so whatever time ends up in the "New time" field for it is, by
+    // construction, unavailable — unlike the requested slot's own self-
+    // exception above, there is nothing wrong with this alternate slot
+    // reading as booked.
+    const ALT_DATE = '2026-12-20';
+    getSlots.mockImplementation(async (_fetch: unknown, _doctorId: unknown, date: string) => {
+      if (date === ALT_DATE) return { slots: [] };
+      return { slots: ['10:00', '11:00'] };
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('request-ref');
+
+    await user.click(screen.getByRole('radio', { name: 'Approve a different slot' }));
+    await user.type(screen.getByLabelText('New date'), ALT_DATE);
+    await waitFor(() => expect(getSlots).toHaveBeenCalledWith(authedFetch, 10, ALT_DATE));
+
+    // The "New time" dropdown legitimately has no selectable options for a
+    // closed day — simulate forcing a value into the underlying <select>
+    // anyway (e.g. a stale/forced selection), so the alternate-slot
+    // conflict check itself — not the dropdown's own filtering — is what's
+    // under test here.
+    const timeSelect = screen.getByLabelText('New time') as HTMLSelectElement;
+    const forcedOption = document.createElement('option');
+    forcedOption.value = '09:00';
+    timeSelect.appendChild(forcedOption);
+    fireEvent.change(timeSelect, { target: { value: '09:00' } });
+
+    expect(screen.getByTestId('alt-slot-badge')).toHaveTextContent('Booked');
+    expect(screen.getByTestId('no-conflicts-line')).toHaveTextContent(/already booked/i);
+    expect(screen.getByTestId('no-conflicts-line')).not.toHaveTextContent(/this time is free/i);
   });
 });
