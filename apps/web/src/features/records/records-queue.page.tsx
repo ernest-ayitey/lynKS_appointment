@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiError } from '../../lib/api-client';
 import { GENERIC_ERROR_MESSAGE } from '../../lib/api-error-handling';
@@ -72,24 +72,43 @@ export default function RecordsQueuePage() {
 
   const [activeTab, setActiveTab] = useState<StatusTab>('pending');
   const [search, setSearch] = useState('');
+  // Both default to '' ("no filter"/"backend default order"), same
+  // lenient-empty-means-omitted convention `search` already follows below —
+  // so the common, unfiltered case keeps sending exactly the same
+  // `getQueue` filters object as before these two controls existed.
+  const [doctorId, setDoctorId] = useState('');
+  const [sort, setSort] = useState<'' | 'oldest' | 'newest'>('');
   const [stats, setStats] = useState<RecordsQueueStats>(EMPTY_STATS);
   const [requests, setRequests] = useState<RecordsQueueRequest[]>([]);
   const [listBanner, setListBanner] = useState<string | null>(null);
   const [actionBanner, setActionBanner] = useState<string | null>(null);
   const [actingId, setActingId] = useState<number | null>(null);
 
+  // The doctor filter's options: the distinct doctors appearing in the
+  // *current* (already-filtered) `requests` list — no separate `GET
+  // /doctors` call needed for this. This does mean the option list can
+  // shrink/grow as other filters change, which is an acceptable trade-off
+  // for not standing up a second data source just for this dropdown.
+  const doctorOptions = useMemo(() => {
+    const byId = new Map<number, RecordsQueueRequest['doctor']>();
+    requests.forEach((request) => byId.set(request.doctor.id, request.doctor));
+    return Array.from(byId.values()).sort((a, b) => a.last_name.localeCompare(b.last_name));
+  }, [requests]);
+
   const refetch = useCallback(async () => {
     setListBanner(null);
     try {
       const filters: RecordsQueueFilters = { status: activeTab };
       if (search) filters.search = search;
+      if (doctorId) filters.doctor_id = Number(doctorId);
+      if (sort) filters.sort = sort;
       const response = await getQueue(authedFetch, filters);
       setStats(response.stats);
       setRequests(response.requests);
     } catch (err) {
       setListBanner(err instanceof ApiError ? err.message : GENERIC_ERROR_MESSAGE);
     }
-  }, [authedFetch, activeTab, search]);
+  }, [authedFetch, activeTab, search, doctorId, sort]);
 
   useEffect(() => {
     void refetch();
@@ -174,14 +193,41 @@ export default function RecordsQueuePage() {
             ))}
           </div>
 
-          <input
-            type="search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search patient, ref, or doctor"
-            aria-label="Search"
-            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
-          />
+          <div className="flex flex-wrap gap-2">
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search by patient or doctor name"
+              aria-label="Search"
+              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+            />
+
+            <select
+              value={doctorId}
+              onChange={(event) => setDoctorId(event.target.value)}
+              aria-label="Doctor"
+              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+            >
+              <option value="">All doctors</option>
+              {doctorOptions.map((doc) => (
+                <option key={doc.id} value={doc.id}>
+                  Dr. {doc.first_name} {doc.last_name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={sort}
+              onChange={(event) => setSort(event.target.value as '' | 'oldest' | 'newest')}
+              aria-label="Sort"
+              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+            >
+              <option value="">Sort</option>
+              <option value="oldest">Oldest first</option>
+              <option value="newest">Newest first</option>
+            </select>
+          </div>
         </div>
 
         {listBanner && (

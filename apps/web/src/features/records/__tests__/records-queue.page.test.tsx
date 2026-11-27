@@ -140,6 +140,29 @@ describe('RecordsQueuePage', () => {
     await waitFor(() => expect(getQueue).toHaveBeenLastCalledWith(authedFetch, { status: 'pending', search: 'Ama' }));
   });
 
+  it('choosing a doctor from the Doctor filter re-fetches with doctor_id set', async () => {
+    getQueue.mockResolvedValueOnce({ stats: statsFixture(), requests: [requestFixture({ id: 42 })], total: 1 });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole('button', { name: 'Approve' });
+
+    await user.selectOptions(screen.getByLabelText('Doctor'), '10');
+
+    await waitFor(() =>
+      expect(getQueue).toHaveBeenLastCalledWith(authedFetch, { status: 'pending', doctor_id: 10 }),
+    );
+  });
+
+  it('choosing a value from the Sort filter re-fetches with sort set', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(getQueue).toHaveBeenCalledTimes(1));
+
+    await user.selectOptions(screen.getByLabelText('Sort'), 'newest');
+
+    await waitFor(() => expect(getQueue).toHaveBeenLastCalledWith(authedFetch, { status: 'pending', sort: 'newest' }));
+  });
+
   it("a pending row's Review action is a link to /records/requests/:id", async () => {
     getQueue.mockResolvedValueOnce({ stats: statsFixture(), requests: [requestFixture({ id: 42 })], total: 1 });
 
