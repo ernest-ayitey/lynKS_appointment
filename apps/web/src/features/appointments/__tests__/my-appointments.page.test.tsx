@@ -71,7 +71,7 @@ describe('MyAppointmentsPage', () => {
     renderPage();
     await waitFor(() => expect(listAppointments).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: 'Upcoming' }));
+    await user.click(screen.getByRole('tab', { name: 'Upcoming' }));
 
     await waitFor(() => expect(listAppointments).toHaveBeenCalledTimes(2));
     const lastCallFilters = listAppointments.mock.calls[1][1];
@@ -89,7 +89,7 @@ describe('MyAppointmentsPage', () => {
     renderPage();
     await waitFor(() => expect(listAppointments).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: 'Pending' }));
+    await user.click(screen.getByRole('tab', { name: 'Pending' }));
 
     await waitFor(() => expect(listAppointments).toHaveBeenCalledTimes(2));
     expect(listAppointments).toHaveBeenLastCalledWith(authedFetch, { status: 'pending' });
@@ -100,7 +100,7 @@ describe('MyAppointmentsPage', () => {
     renderPage();
     await waitFor(() => expect(listAppointments).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: 'Past' }));
+    await user.click(screen.getByRole('tab', { name: 'Past' }));
 
     await waitFor(() => expect(listAppointments).toHaveBeenCalledTimes(2));
     const lastCallFilters = listAppointments.mock.calls[1][1];
@@ -119,10 +119,29 @@ describe('MyAppointmentsPage', () => {
     renderPage();
     await waitFor(() => expect(listAppointments).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: 'Declined/cancelled' }));
+    await user.click(screen.getByRole('tab', { name: 'Declined/cancelled' }));
 
     await waitFor(() => expect(listAppointments).toHaveBeenCalledTimes(2));
     expect(listAppointments).toHaveBeenLastCalledWith(authedFetch, { status: 'declined,cancelled' });
+  });
+
+  it('exposes the tab bar with role="tablist" and each tab with role="tab" and the correct aria-selected', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(listAppointments).toHaveBeenCalledTimes(1));
+
+    expect(screen.getByRole('tablist')).toBeInTheDocument();
+
+    const allTab = screen.getByRole('tab', { name: 'All' });
+    const upcomingTab = screen.getByRole('tab', { name: 'Upcoming' });
+    expect(allTab).toHaveAttribute('aria-selected', 'true');
+    expect(upcomingTab).toHaveAttribute('aria-selected', 'false');
+
+    await user.click(upcomingTab);
+
+    await waitFor(() => expect(listAppointments).toHaveBeenCalledTimes(2));
+    expect(upcomingTab).toHaveAttribute('aria-selected', 'true');
+    expect(allTab).toHaveAttribute('aria-selected', 'false');
   });
 
   it('shows a Cancel action only for pending/approved rows, never for terminal statuses', async () => {
