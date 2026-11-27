@@ -29,8 +29,8 @@ function renderPage(token = 'abc123') {
 
 async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>, password = 'Sup3r!word') {
   await user.type(screen.getByLabelText(/^new password$/i), password);
-  await user.type(screen.getByLabelText(/confirm password/i), password);
-  await user.click(screen.getByRole('button', { name: /reset password/i }));
+  await user.type(screen.getByLabelText(/confirm new password/i), password);
+  await user.click(screen.getByRole('button', { name: /save and sign in/i }));
 }
 
 describe('ResetPasswordPage', () => {
