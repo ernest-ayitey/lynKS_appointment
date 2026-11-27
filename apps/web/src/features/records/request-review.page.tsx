@@ -118,6 +118,11 @@ export default function RequestReviewPage() {
         if (!cancelled) {
           setRequestDetail(response.request);
           setPatientStats(response.patient_stats);
+          // Seeds the textarea with whatever note already exists, so a
+          // records user re-opening a request (or returning after an Undo)
+          // can see it rather than facing a blank field that would silently
+          // overwrite it on the next submission.
+          setValue('internalNote', response.request.internal_note ?? '');
         }
       } catch (err) {
         if (!cancelled) setLoadBanner(err instanceof ApiError ? err.message : GENERIC_ERROR_MESSAGE);

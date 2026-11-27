@@ -115,6 +115,17 @@ describe('RequestReviewPage', () => {
     expect(screen.getByText(/3 \(last: 2026-09-01\)/)).toBeInTheDocument();
   });
 
+  it('seeds the Internal note textarea from the fetched request detail', async () => {
+    getRequest.mockResolvedValueOnce({
+      request: requestDetailFixture({ internal_note: 'Called patient last week.' }),
+      patient_stats: patientStatsFixture(),
+    });
+    renderPage();
+    await screen.findByTestId('request-ref');
+
+    expect(await screen.findByLabelText('Internal note')).toHaveValue('Called patient last week.');
+  });
+
   it('selecting "Approve a different slot" reveals New date/New time, and hides them again when switching back to Approve', async () => {
     const user = userEvent.setup();
     renderPage();
