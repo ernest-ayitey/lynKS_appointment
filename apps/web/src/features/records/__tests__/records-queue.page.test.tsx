@@ -102,7 +102,7 @@ describe('RecordsQueuePage', () => {
     renderPage();
     await waitFor(() => expect(getQueue).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: 'Approved' }));
+    await user.click(screen.getByRole('tab', { name: 'Approved' }));
 
     await waitFor(() => expect(getQueue).toHaveBeenCalledTimes(2));
     expect(getQueue).toHaveBeenLastCalledWith(authedFetch, { status: 'approved' });
@@ -113,7 +113,7 @@ describe('RecordsQueuePage', () => {
     renderPage();
     await waitFor(() => expect(getQueue).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: 'Declined' }));
+    await user.click(screen.getByRole('tab', { name: 'Declined' }));
 
     await waitFor(() => expect(getQueue).toHaveBeenCalledTimes(2));
     expect(getQueue).toHaveBeenLastCalledWith(authedFetch, { status: 'declined' });
@@ -124,7 +124,7 @@ describe('RecordsQueuePage', () => {
     renderPage();
     await waitFor(() => expect(getQueue).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: 'Cancelled' }));
+    await user.click(screen.getByRole('tab', { name: 'Cancelled' }));
 
     await waitFor(() => expect(getQueue).toHaveBeenCalledTimes(2));
     expect(getQueue).toHaveBeenLastCalledWith(authedFetch, { status: 'cancelled' });
