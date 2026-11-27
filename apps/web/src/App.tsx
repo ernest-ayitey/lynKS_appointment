@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import AppShell from './components/app-shell';
 import BookAppointmentPage from './features/appointments/book-appointment.page';
 import MyAppointmentsPage from './features/appointments/my-appointments.page';
 import ChangePasswordPage from './features/auth/change-password.page';
@@ -41,7 +42,9 @@ export default function App() {
                 path="/"
                 element={
                   <ProtectedRoute>
-                    <RoleLandingPage />
+                    <AppShell>
+                      <RoleLandingPage />
+                    </AppShell>
                   </ProtectedRoute>
                 }
               />
@@ -49,7 +52,9 @@ export default function App() {
                 path="/doctor/availability"
                 element={
                   <ProtectedRoute allowedRoles={['doctor']}>
-                    <DoctorAvailabilityPage />
+                    <AppShell activeNavKey="doctor-availability">
+                      <DoctorAvailabilityPage />
+                    </AppShell>
                   </ProtectedRoute>
                 }
               />
@@ -57,7 +62,9 @@ export default function App() {
                 path="/doctor/appointments"
                 element={
                   <ProtectedRoute allowedRoles={['doctor']}>
-                    <DoctorAppointmentsPage />
+                    <AppShell activeNavKey="doctor-appointments">
+                      <DoctorAppointmentsPage />
+                    </AppShell>
                   </ProtectedRoute>
                 }
               />
@@ -65,7 +72,9 @@ export default function App() {
                 path="/book"
                 element={
                   <ProtectedRoute allowedRoles={['patient']}>
-                    <BookAppointmentPage />
+                    <AppShell activeNavKey="patient-book">
+                      <BookAppointmentPage />
+                    </AppShell>
                   </ProtectedRoute>
                 }
               />
@@ -73,7 +82,9 @@ export default function App() {
                 path="/appointments"
                 element={
                   <ProtectedRoute allowedRoles={['patient']}>
-                    <MyAppointmentsPage />
+                    <AppShell activeNavKey="patient-appointments">
+                      <MyAppointmentsPage />
+                    </AppShell>
                   </ProtectedRoute>
                 }
               />
@@ -81,7 +92,9 @@ export default function App() {
                 path="/records/queue"
                 element={
                   <ProtectedRoute allowedRoles={['records']}>
-                    <RecordsQueuePage />
+                    <AppShell activeNavKey="records-queue">
+                      <RecordsQueuePage />
+                    </AppShell>
                   </ProtectedRoute>
                 }
               />
@@ -89,7 +102,9 @@ export default function App() {
                 path="/records/requests/:id"
                 element={
                   <ProtectedRoute allowedRoles={['records']}>
-                    <RequestReviewPage />
+                    <AppShell activeNavKey="records-queue">
+                      <RequestReviewPage />
+                    </AppShell>
                   </ProtectedRoute>
                 }
               />
