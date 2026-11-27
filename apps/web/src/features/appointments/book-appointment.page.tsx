@@ -256,177 +256,203 @@ export default function BookAppointmentPage() {
   const days = Array.from({ length: daysInMonth(monthDate) }, (_, i) => i + 1);
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-8">
-      <div className="mx-auto max-w-3xl space-y-8">
+    <div className="mx-auto max-w-3xl space-y-8">
+      <div>
         <h1 className="text-2xl font-semibold text-slate-900">Book an appointment</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Only days your doctor has marked as available can be selected.
+        </p>
+      </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6" noValidate>
-          {formBanner && (
-            <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-              {formBanner}
-            </div>
-          )}
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6" noValidate>
+        {formBanner && (
+          <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+            {formBanner}
+          </div>
+        )}
 
-          {/* Registered-but-unrendered: these two selections are driven by
-              the calendar/slot buttons below via `setValue`, not a visible
-              input, but still need to participate in react-hook-form's
-              validation and submitted values. */}
-          <input type="hidden" {...register('date', { required: true })} />
-          <input type="hidden" {...register('time', { required: true })} />
+        {/* Registered-but-unrendered: these two selections are driven by
+            the calendar/slot buttons below via `setValue`, not a visible
+            input, but still need to participate in react-hook-form's
+            validation and submitted values. */}
+        <input type="hidden" {...register('date', { required: true })} />
+        <input type="hidden" {...register('time', { required: true })} />
 
-          <section className="rounded-lg bg-white p-6 shadow">
-            <div>
-              <label htmlFor="departmentId" className="block text-sm font-medium text-slate-700">
-                Department
-              </label>
-              <select
-                id="departmentId"
-                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                {...register('departmentId')}
-              >
-                <option value="">All departments</option>
-                {departments.map((department) => (
-                  <option key={department.id} value={department.id}>
-                    {department.name}
-                  </option>
-                ))}
-              </select>
-              {departmentsBanner && <p className="mt-1 text-sm text-red-600">{departmentsBanner}</p>}
-            </div>
+        <section className="rounded-lg border border-slate-300 bg-white p-6">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white">
+              1
+            </span>
+            Choose department &amp; doctor
+          </div>
 
-            <div className="mt-4">
-              <label htmlFor="doctorId" className="block text-sm font-medium text-slate-700">
-                Doctor
-              </label>
-              <select
-                id="doctorId"
-                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                {...register('doctorId', { required: true })}
-              >
-                <option value="">Select a doctor</option>
-                {doctors.map((doctor) => (
-                  <option key={doctor.id} value={doctor.id}>
-                    {doctor.first_name} {doctor.last_name} — {doctor.department.name}
-                  </option>
-                ))}
-              </select>
-              {errors.doctorId && <p className="mt-1 text-sm text-red-600">{errors.doctorId.message}</p>}
-              {doctorsBanner && <p className="mt-1 text-sm text-red-600">{doctorsBanner}</p>}
-            </div>
-          </section>
+          <div className="mt-4">
+            <label htmlFor="departmentId" className="block text-sm font-medium text-slate-700">
+              Department
+            </label>
+            <select
+              id="departmentId"
+              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              {...register('departmentId')}
+            >
+              <option value="">All departments</option>
+              {departments.map((department) => (
+                <option key={department.id} value={department.id}>
+                  {department.name}
+                </option>
+              ))}
+            </select>
+            {departmentsBanner && <p className="mt-1 text-sm text-red-600">{departmentsBanner}</p>}
+          </div>
 
-          {doctorId && (
-            <section className="rounded-lg bg-white p-6 shadow">
-              <h2 className="mb-4 text-lg font-medium text-slate-900">
-                {MONTH_NAMES[monthDate.getMonth()]} {monthDate.getFullYear()}
-              </h2>
+          <div className="mt-4">
+            <label htmlFor="doctorId" className="block text-sm font-medium text-slate-700">
+              Doctor
+            </label>
+            <select
+              id="doctorId"
+              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              {...register('doctorId', { required: true })}
+            >
+              <option value="">Select a doctor</option>
+              {doctors.map((doctor) => (
+                <option key={doctor.id} value={doctor.id}>
+                  {doctor.first_name} {doctor.last_name} — {doctor.department.name}
+                </option>
+              ))}
+            </select>
+            {errors.doctorId && <p className="mt-1 text-sm text-red-600">{errors.doctorId.message}</p>}
+            {doctorsBanner && <p className="mt-1 text-sm text-red-600">{doctorsBanner}</p>}
+          </div>
+        </section>
 
-              <div className="grid grid-cols-7 gap-1 text-center text-sm">
-                {blanks.map((_, index) => (
-                  <div key={`blank-${index}`} />
-                ))}
-                {days.map((day) => {
-                  const dateIso = isoDate(new Date(monthDate.getFullYear(), monthDate.getMonth(), day));
-                  const available = isBookable(dateIso);
-                  const selected = date === dateIso;
-                  return (
-                    <button
-                      key={dateIso}
-                      type="button"
-                      aria-label={dateIso}
-                      aria-pressed={selected}
-                      disabled={!available}
-                      onClick={() => selectDate(dateIso)}
-                      className={`rounded-md py-2 ${
-                        selected
-                          ? 'bg-blue-600 text-white'
-                          : available
-                            ? 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                            : 'cursor-not-allowed bg-slate-50 text-slate-300'
-                      }`}
-                    >
-                      {day}
-                    </button>
-                  );
-                })}
+        {doctorId && (
+          <section className="rounded-lg border border-slate-300 bg-white p-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white">
+                  2
+                </span>
+                Pick an available day
               </div>
-              {errors.date && <p className="mt-2 text-sm text-red-600">{errors.date.message}</p>}
-              {availabilityBanner && <p className="mt-2 text-sm text-red-600">{availabilityBanner}</p>}
-            </section>
-          )}
+              <span className="text-sm font-medium text-slate-900">
+                {MONTH_NAMES[monthDate.getMonth()]} {monthDate.getFullYear()}
+              </span>
+            </div>
 
-          {date && (
-            <section className="rounded-lg bg-white p-6 shadow">
-              <h2 className="mb-4 text-lg font-medium text-slate-900">Time</h2>
-              <div className="flex flex-wrap gap-2">
-                {slots.map((slot) => (
+            <div className="grid grid-cols-7 gap-1 text-center text-sm">
+              {blanks.map((_, index) => (
+                <div key={`blank-${index}`} />
+              ))}
+              {days.map((day) => {
+                const dateIso = isoDate(new Date(monthDate.getFullYear(), monthDate.getMonth(), day));
+                const available = isBookable(dateIso);
+                const selected = date === dateIso;
+                return (
                   <button
-                    key={slot}
+                    key={dateIso}
                     type="button"
-                    aria-pressed={time === slot}
-                    onClick={() => selectTime(slot)}
-                    className={`rounded-md px-3 py-1.5 text-sm ${
-                      time === slot ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    aria-label={dateIso}
+                    aria-pressed={selected}
+                    disabled={!available}
+                    onClick={() => selectDate(dateIso)}
+                    className={`rounded-md border py-2 font-medium ${
+                      selected
+                        ? 'border-blue-600 bg-blue-600 text-white'
+                        : available
+                          ? 'border-blue-600 bg-white text-blue-700 hover:bg-blue-50'
+                          : 'cursor-not-allowed border-transparent bg-slate-50 text-slate-300'
                     }`}
                   >
-                    {slot}
+                    {day}
                   </button>
-                ))}
-                {slots.length === 0 && <p className="text-sm text-slate-500">No times available for this day.</p>}
-              </div>
-              {errors.time && <p className="mt-2 text-sm text-red-600">{errors.time.message}</p>}
-              {slotsBanner && <p className="mt-2 text-sm text-red-600">{slotsBanner}</p>}
-            </section>
-          )}
-
-          <section className="space-y-4 rounded-lg bg-white p-6 shadow">
-            <div>
-              <label htmlFor="visitType" className="block text-sm font-medium text-slate-700">
-                Visit type
-              </label>
-              <select
-                id="visitType"
-                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                {...register('visitType', { required: true })}
-              >
-                <option value="">Select a visit type</option>
-                {VISIT_TYPES.map((visitType) => (
-                  <option key={visitType.value} value={visitType.value}>
-                    {visitType.label}
-                  </option>
-                ))}
-              </select>
-              {errors.visitType && <p className="mt-1 text-sm text-red-600">{errors.visitType.message}</p>}
+                );
+              })}
             </div>
-
-            <div>
-              <label htmlFor="reason" className="block text-sm font-medium text-slate-700">
-                Reason for visit
-              </label>
-              <textarea
-                id="reason"
-                rows={3}
-                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                {...register('reason', { required: true })}
-              />
-              {errors.reason && <p className="mt-1 text-sm text-red-600">{errors.reason.message}</p>}
-            </div>
-
-            <label htmlFor="smsReminderOptIn" className="flex items-center gap-2 text-sm text-slate-700">
-              <input id="smsReminderOptIn" type="checkbox" {...register('smsReminderOptIn')} />
-              Send me an SMS reminder
-            </label>
+            {errors.date && <p className="mt-2 text-sm text-red-600">{errors.date.message}</p>}
+            {availabilityBanner && <p className="mt-2 text-sm text-red-600">{availabilityBanner}</p>}
           </section>
+        )}
 
-          <button
-            type="submit"
-            disabled={isSubmitting || !doctorId || !date || !time}
-            className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-          >
-            Book appointment
-          </button>
-        </form>
-      </div>
+        {date && (
+          <section className="rounded-lg border border-slate-300 bg-white p-6">
+            <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-500">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white">
+                3
+              </span>
+              Choose a time
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {slots.map((slot) => (
+                <button
+                  key={slot}
+                  type="button"
+                  aria-pressed={time === slot}
+                  onClick={() => selectTime(slot)}
+                  className={`rounded-md border px-3 py-1.5 text-sm font-medium ${
+                    time === slot
+                      ? 'border-blue-600 bg-blue-600 text-white'
+                      : 'border-slate-300 bg-white text-slate-900 hover:bg-slate-50'
+                  }`}
+                >
+                  {slot}
+                </button>
+              ))}
+              {slots.length === 0 && <p className="text-sm text-slate-500">No times available for this day.</p>}
+            </div>
+            {errors.time && <p className="mt-2 text-sm text-red-600">{errors.time.message}</p>}
+            {slotsBanner && <p className="mt-2 text-sm text-red-600">{slotsBanner}</p>}
+          </section>
+        )}
+
+        <section className="space-y-4 rounded-lg border border-slate-300 bg-white p-6">
+          <div>
+            <label htmlFor="visitType" className="block text-sm font-medium text-slate-700">
+              Visit type
+            </label>
+            <select
+              id="visitType"
+              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              {...register('visitType', { required: true })}
+            >
+              <option value="">Select a visit type</option>
+              {VISIT_TYPES.map((visitType) => (
+                <option key={visitType.value} value={visitType.value}>
+                  {visitType.label}
+                </option>
+              ))}
+            </select>
+            {errors.visitType && <p className="mt-1 text-sm text-red-600">{errors.visitType.message}</p>}
+          </div>
+
+          <div>
+            <label htmlFor="reason" className="block text-sm font-medium text-slate-700">
+              Reason for visit
+            </label>
+            <textarea
+              id="reason"
+              rows={3}
+              placeholder="Briefly describe your symptoms or reason"
+              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              {...register('reason', { required: true })}
+            />
+            {errors.reason && <p className="mt-1 text-sm text-red-600">{errors.reason.message}</p>}
+          </div>
+
+          <label htmlFor="smsReminderOptIn" className="flex items-center gap-2 text-sm text-slate-700">
+            <input id="smsReminderOptIn" type="checkbox" {...register('smsReminderOptIn')} />
+            Send me an SMS reminder
+          </label>
+        </section>
+
+        <button
+          type="submit"
+          disabled={isSubmitting || !doctorId || !date || !time}
+          className="w-full rounded-md border border-blue-600 bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:border-blue-700 hover:bg-blue-700 disabled:opacity-60"
+        >
+          Book appointment
+        </button>
+      </form>
     </div>
   );
 }
