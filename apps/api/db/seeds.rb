@@ -53,6 +53,17 @@ DEPARTMENTS = [
   }
 ].freeze
 
+# A demo `records`-role login — this plan is the first to need one, ahead
+# of the Admin plan's real account-creation UI, same reasoning as the
+# doctors above.
+RECORDS_STAFF = {
+  username: 'records.staff',
+  email: 'records.staff@lynks.demo',
+  first_name: 'Linda',
+  last_name: 'Boateng',
+  password: 'Records123!'
+}.freeze
+
 # Every weekday (Mon-Fri) in a given month.
 def weekdays_in(year, month)
   (Date.new(year, month, 1)..Date.new(year, month, -1)).select { |d| (1..5).cover?(d.wday) }
@@ -99,6 +110,25 @@ DEPARTMENTS.each do |dept_attrs|
   end
   puts "  Availability ensured for #{AVAILABILITY_DATES.size} weekdays " \
        "(#{AVAILABILITY_DATES.first} .. #{AVAILABILITY_DATES.last})"
+end
+
+records_just_created = false
+records_user = User.find_or_create(username: RECORDS_STAFF[:username]) do |u|
+  u.role = 'records'
+  u.status = 'active'
+  u.must_change_password = false
+  u.email = RECORDS_STAFF[:email]
+  u.first_name = RECORDS_STAFF[:first_name]
+  u.last_name = RECORDS_STAFF[:last_name]
+  u.password = RECORDS_STAFF[:password]
+  records_just_created = true
+end
+
+if records_just_created
+  puts "Created records user #{records_user.first_name} #{records_user.last_name} " \
+       "- username: #{RECORDS_STAFF[:username]}, password: #{RECORDS_STAFF[:password]}"
+else
+  puts "Records user #{RECORDS_STAFF[:username]} already exists (id=#{records_user.id})"
 end
 
 puts 'Seed complete.'

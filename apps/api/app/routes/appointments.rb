@@ -155,8 +155,9 @@ class AppointmentRoutes < ApiRoutes
     dataset = filter_by_search(dataset, params['search'])
     dataset = filter_by_date_range(dataset, params['from'], params['to'])
 
-    appointments = dataset.order(Sequel.desc(:date), Sequel.desc(:time)).all
-    json(appointments: appointments.map { |a| appointment_json(a) }, total: appointments.size)
+    appointments = dataset.eager(:doctor).order(Sequel.desc(:date), Sequel.desc(:time)).all
+    departments_by_id = Department.where(id: appointments.map(&:department_id).uniq).as_hash(:id)
+    json(appointments: appointments.map { |a| appointment_json(a, department: departments_by_id[a.department_id]) }, total: appointments.size)
   end
 
   # Ownership mismatch and "doesn't exist" are deliberately indistinguishable
@@ -332,9 +333,9 @@ class AppointmentRoutes < ApiRoutes
       dataset
     end
 
-    def appointment_json(appointment)
+    def appointment_json(appointment, department: nil)
       doctor = appointment.doctor
-      department = Department[appointment.department_id]
+      department ||= Department[appointment.department_id]
       {
         id: appointment.id,
         doctor: { id: doctor.id, first_name: doctor.first_name, last_name: doctor.last_name },
@@ -345,7 +346,10 @@ class AppointmentRoutes < ApiRoutes
         visit_type: appointment.visit_type,
         reason: appointment.reason,
         status: appointment.status,
-        submitted_at: appointment.submitted_at.iso8601
+        submitted_at: appointment.submitted_at.iso8601,
+        decline_reason_code: appointment.decline_reason_code,
+        decline_message: appointment.decline_message,
+        decided_at: appointment.decided_at&.iso8601
       }
     end
   end

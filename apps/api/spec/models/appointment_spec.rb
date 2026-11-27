@@ -44,4 +44,59 @@ RSpec.describe Appointment do
   it 'defines OCCUPYING_STATUSES as exactly pending and approved' do
     expect(Appointment::OCCUPYING_STATUSES).to eq(%w[pending approved])
   end
+
+  def build_appointment(overrides = {})
+    department = Department.create(name: "Cardiology-#{SecureRandom.hex(4)}")
+    unique_id = SecureRandom.hex(4)
+    patient = User.create(role: 'patient', username: "patient-#{unique_id}", email: "patient-#{unique_id}@x.com",
+      first_name: 'Pat', last_name: 'Ient', password: 'Sup3r!word')
+    doctor = User.create(role: 'doctor', username: "doctor-#{unique_id}", email: "doctor-#{unique_id}@x.com",
+      first_name: 'Dana', last_name: 'Who', password: 'Sup3r!word')
+    DoctorProfile.create(user: doctor, department: department, specialty_title: 'Cardiologist')
+
+    Appointment.new(
+      patient_id: patient.id,
+      doctor_id: doctor.id,
+      department_id: department.id,
+      date: Date.new(2026, 12, 1),
+      time: '09:00',
+      duration_minutes: 30,
+      visit_type: 'new_consultation',
+      reason: 'Checkup',
+      submitted_at: Time.now,
+      **overrides
+    )
+  end
+
+  it 'rejects a status outside the known set' do
+    appointment = build_appointment(status: 'bogus')
+    expect(appointment).not_to be_valid
+    expect(appointment.errors[:status]).not_to be_empty
+  end
+
+  it 'rejects a decline_reason_code outside the known set, but allows nil' do
+    declined = build_appointment(status: 'declined', decline_reason_code: 'not_a_real_reason')
+    expect(declined).not_to be_valid
+
+    pending_one = build_appointment(status: 'pending', decline_reason_code: nil)
+    expect(pending_one).to be_valid
+  end
+
+  # `decline_message`/`internal_note` are VARCHAR(255) columns with no
+  # length validation previously — a message over 255 characters either
+  # raised a DB error under MySQL strict mode or got truncated silently.
+  %i[decline_message internal_note].each do |field|
+    it "rejects a 256-character #{field} but allows a 255-character one" do
+      too_long = build_appointment(field => 'a' * 256)
+      expect(too_long).not_to be_valid
+      expect(too_long.errors[field]).not_to be_empty
+
+      exactly_255 = build_appointment(field => 'a' * 255)
+      expect(exactly_255).to be_valid
+    end
+
+    it "allows a nil #{field}" do
+      expect(build_appointment(field => nil)).to be_valid
+    end
+  end
 end

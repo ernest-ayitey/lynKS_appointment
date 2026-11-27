@@ -40,6 +40,14 @@ export default function RoleLandingPage() {
             </Link>
           </>
         )}
+        {user?.role === 'records' && (
+          <Link
+            to="/records/queue"
+            className="mt-4 inline-block rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700"
+          >
+            Review Requests
+          </Link>
+        )}
         <button
           type="button"
           onClick={handleLogout}
