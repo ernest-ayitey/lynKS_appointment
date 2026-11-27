@@ -21,6 +21,8 @@ class AppointmentRoutes < ApiRoutes
   REASON_REQUIRED_MESSAGE = 'Reason is required'
   NOT_FOUND_MESSAGE = 'Not found'
   ALREADY_FINAL_MESSAGE = 'This appointment can no longer be cancelled'
+  PATCHABLE_STATUSES = %w[completed no_show].freeze
+  VISIT_NOTES_TOO_LONG_MESSAGE = 'Visit notes must be 255 characters or fewer'
 
   ISO_DATE = /\A\d{4}-\d{2}-\d{2}\z/
 
@@ -40,13 +42,47 @@ class AppointmentRoutes < ApiRoutes
   # read unambiguously at every call site, so this file keeps using them
   # instead of switching to a regex filter. Task 4 adds its own filter here
   # for `/appointments/:id/cancel` the same way.
-  before('/appointments/:id') { authenticate!; require_role!('patient') }
+  #
+  # Task 2 adds `PATCH /appointments/:id` for doctors to this same path.
+  # `before 'path'` filters match on path alone, regardless of HTTP verb —
+  # Sinatra's filter-dispatch runs every registered filter whose path
+  # matches, independent of the request's method — so a
+  # `require_role!('patient')` here would also fire for a doctor's PATCH
+  # and 403 it before the handler below ever ran. So this filter now only
+  # authenticates; the role check for `GET /appointments/:id` moved to be
+  # the first line inside that handler instead, leaving its own externally
+  # observable behavior unchanged.
+  before('/appointments/:id') { authenticate! }
 
   # A third distinct literal path, per the same `before 'path'`-is-not-a-prefix
   # reasoning above: neither of the two filters above runs for this one.
   before('/appointments/:id/cancel') { authenticate!; require_role!('patient') }
 
+  # A fourth distinct literal path, scoped to the doctor's own appointment
+  # list — same Rack::Cascade and house-style reasoning as the filters
+  # above.
+  before('/doctor/appointments') { authenticate!; require_role!('doctor') }
+
   before('/appointments') do
+    if request.body
+      request.body.rewind
+      parsed = JSON.parse(request.body.read)
+      @payload = parsed.is_a?(Hash) ? parsed : {}
+    else
+      @payload = {}
+    end
+  rescue JSON::ParserError
+    @payload = {}
+  end
+
+  # No existing body-parsing filter covers `/appointments/:id`: the one
+  # above is scoped to the literal `/appointments` path only (the booking
+  # route) and, per the same not-a-prefix rule, does not also run here. A
+  # second `before` block on the same path is fine — Sinatra runs multiple
+  # `before` blocks for one path in registration order — so this mirrors
+  # the booking route's body-parser exactly, just for `PATCH
+  # /appointments/:id`'s body.
+  before('/appointments/:id') do
     if request.body
       request.body.rewind
       parsed = JSON.parse(request.body.read)
@@ -164,6 +200,7 @@ class AppointmentRoutes < ApiRoutes
   # from the caller's side — both 404 with the same body — mirroring
   # `GET /doctors/:id/availability`'s locked-doctor precedent in doctors.rb.
   get '/appointments/:id' do
+    require_role!('patient')
     appointment = Appointment.where(id: params['id'], patient_id: current_user.id).first
     halt_json_error 404, NOT_FOUND_MESSAGE unless appointment
 
@@ -183,6 +220,74 @@ class AppointmentRoutes < ApiRoutes
 
     appointment.update(status: 'cancelled')
     json(appointment_json(appointment))
+  end
+
+  # The doctor's own appointments, restricted to the statuses relevant to a
+  # doctor's worklist of visits they still need to close out or already
+  # have: `approved` (booked, upcoming or today), `completed`, and
+  # `no_show`. `pending`/`declined`/`cancelled` never occupy a doctor's time
+  # and are deliberately excluded — this is not the same list as a patient's
+  # `GET /appointments`, which shows every status. No pagination, same
+  # `total`-is-just-the-filtered-count contract as `GET /appointments`
+  # above.
+  get '/doctor/appointments' do
+    dataset = Appointment.where(doctor_id: current_user.id, status: %w[approved completed no_show])
+    dataset = filter_by_patient_name(dataset, params['search'])
+    dataset = filter_by_date_range(dataset, params['from'], params['to'])
+
+    # `.eager(:patient)` plus one bulk `approved_by_by_id` hash built up
+    # front, so this doesn't introduce an N+1 the same way Task 1's `GET
+    # /appointments` and records.rb's `GET /records/queue` already avoid one
+    # for their own per-row associations — see those routes' own comments on
+    # this exact pattern.
+    appointments = dataset.eager(:patient).order(:date, :time).all
+    approved_by_ids = appointments.map(&:decided_by_user_id).compact.uniq
+    approved_by_by_id = User.where(id: approved_by_ids).as_hash(:id)
+
+    json(
+      appointments: appointments.map { |a| doctor_appointment_json(a, approved_by: approved_by_by_id[a.decided_by_user_id]) },
+      total: appointments.size
+    )
+  end
+
+  # Same ownership-scoped lookup (and therefore the same 404 for "doesn't
+  # exist" and "belongs to another doctor") as the patient-facing routes
+  # above. No concurrency guard is needed here, unlike booking/approving:
+  # marking an already-`approved` appointment `completed`/`no_show` never
+  # contends for a slot — two doctors can't both own the same appointment,
+  # and this ownership-scoped lookup already makes the read-then-update
+  # safe.
+  patch '/appointments/:id' do
+    require_role!('doctor')
+    appointment = Appointment.where(id: params['id'], doctor_id: current_user.id).first
+    halt_json_error 404, NOT_FOUND_MESSAGE unless appointment
+
+    new_status = @payload['status']
+    unless new_status.is_a?(String) && PATCHABLE_STATUSES.include?(new_status)
+      halt_json_error 422, VALIDATION_FAILED_MESSAGE, status: "Status must be one of: #{PATCHABLE_STATUSES.join(', ')}"
+    end
+    unless appointment.status == 'approved'
+      halt_json_error 422, VALIDATION_FAILED_MESSAGE, status: 'Only an approved appointment can be marked completed or no-show'
+    end
+
+    # `Appointment#validate`'s `validates_max_length 255, :visit_notes` would
+    # catch an over-length value too, but only by raising
+    # `Sequel::ValidationFailed` out of `update` (since `raise_on_save_failure`
+    # defaults to true) — and this app's `error 500` handler (api_base.rb) has
+    # no handler for that exception, so it would surface as an unhandled 500
+    # instead of a 422. A non-String value (e.g. an integer) would fare worse:
+    # `validates_max_length` calls `.length` on it and raises `NoMethodError`,
+    # also an unhandled 500. Pre-checking here, the same way `status` above
+    # is pre-checked rather than left to the model, keeps this route's error
+    # envelope consistent for every rejection reason.
+    visit_notes = @payload['visit_notes']
+    unless visit_notes.nil? || (visit_notes.is_a?(String) && visit_notes.length <= 255)
+      halt_json_error 422, VALIDATION_FAILED_MESSAGE, visit_notes: VISIT_NOTES_TOO_LONG_MESSAGE
+    end
+
+    appointment.update(status: new_status, visit_notes: visit_notes)
+    approved_by_user = appointment.decided_by_user_id && User[appointment.decided_by_user_id]
+    json(doctor_appointment_json(appointment, approved_by: approved_by_user))
   end
 
   helpers do
@@ -319,6 +424,22 @@ class AppointmentRoutes < ApiRoutes
       dataset.where(Sequel.|({ doctor_id: doctor_ids }, { department_id: department_ids }))
     end
 
+    # The opposite direction of `filter_by_search` above: this is a doctor
+    # searching their *own* appointment list by patient name, not a patient
+    # searching for a doctor, so this matches `patient_id` instead of
+    # `doctor_id`. Same shape otherwise — case-insensitive substring via
+    # `Sequel.ilike` against first/last name, blank-is-no-filter.
+    def filter_by_patient_name(dataset, raw_search)
+      term = raw_search.to_s.strip
+      return dataset if term.empty?
+
+      pattern = "%#{term}%"
+      patient_ids = User.where(Sequel.|(Sequel.ilike(:first_name, pattern), Sequel.ilike(:last_name, pattern)))
+                         .select_map(:id)
+
+      dataset.where(patient_id: patient_ids)
+    end
+
     # `from` and `to` each independently narrow the `date` range when
     # present and parseable; an invalid or absent value is simply not
     # applied, matching this route's generally lenient (ignore rather than
@@ -351,6 +472,62 @@ class AppointmentRoutes < ApiRoutes
         decline_message: appointment.decline_message,
         decided_at: appointment.decided_at&.iso8601
       }
+    end
+
+    # `REQ-%05d` is the same reference convention the Records plan
+    # established (`RecordsRoutes#ref_for`); duplicated here as a one-liner
+    # rather than imported from `RecordsRoutes`, per this codebase's house
+    # convention of small duplicated helpers across route files rather than
+    # cross-class imports.
+    def ref_for(appointment)
+      format('REQ-%05d', appointment.id)
+    end
+
+    # The doctor-facing appointment shape for `GET /doctor/appointments`
+    # and `PATCH /appointments/:id` — distinct from `appointment_json`
+    # above (the patient-facing shape): it surfaces the patient's contact
+    # and demographic details a doctor needs (`phone`, `sex`, `age`)
+    # instead of the doctor/department identity a patient already knows,
+    # and adds `approved_by`/`visit_notes`, which patients never see.
+    def doctor_appointment_json(appointment, approved_by: nil)
+      patient = appointment.patient
+
+      {
+        id: appointment.id,
+        ref: ref_for(appointment),
+        patient: {
+          id: patient.id,
+          first_name: patient.first_name,
+          last_name: patient.last_name,
+          phone: patient.phone,
+          sex: patient.gender,
+          age: age_for(patient.date_of_birth)
+        },
+        date: appointment.date.iso8601,
+        time: appointment.time,
+        duration_minutes: appointment.duration_minutes,
+        visit_type: appointment.visit_type,
+        reason: appointment.reason,
+        status: appointment.status,
+        approved_by: approved_by && { id: approved_by.id, first_name: approved_by.first_name, last_name: approved_by.last_name },
+        visit_notes: appointment.visit_notes
+      }
+    end
+
+    # Whole years between `date_of_birth` and today, or nil when the
+    # patient has no recorded date of birth (an optional field at
+    # registration — see auth.rb). Plain date arithmetic rather than
+    # ActiveSupport (not a dependency of this Sinatra app): subtract birth
+    # year from the current year, then back off one if this year's
+    # birthday hasn't happened yet.
+    def age_for(date_of_birth)
+      return nil unless date_of_birth
+
+      today = Date.today
+      years = today.year - date_of_birth.year
+      years -= 1 if today.month < date_of_birth.month ||
+                    (today.month == date_of_birth.month && today.day < date_of_birth.day)
+      years
     end
   end
 end

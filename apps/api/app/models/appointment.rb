@@ -26,5 +26,6 @@ class Appointment < Sequel::Model(:appointments)
     # email.
     validates_max_length 255, :decline_message, allow_nil: true
     validates_max_length 255, :internal_note, allow_nil: true
+    validates_max_length 255, :visit_notes, allow_nil: true
   end
 end

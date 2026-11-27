@@ -8,6 +8,7 @@ import LoginPage from './features/auth/login.page';
 import RegisterPage from './features/auth/register.page';
 import ResetPasswordPage from './features/auth/reset-password.page';
 import RoleLandingPage from './features/dashboard/role-landing.page';
+import DoctorAppointmentsPage from './features/doctor/doctor-appointments.page';
 import DoctorAvailabilityPage from './features/doctor/doctor-availability.page';
 import RecordsQueuePage from './features/records/records-queue.page';
 import RequestReviewPage from './features/records/request-review.page';
@@ -49,6 +50,14 @@ export default function App() {
                 element={
                   <ProtectedRoute allowedRoles={['doctor']}>
                     <DoctorAvailabilityPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/doctor/appointments"
+                element={
+                  <ProtectedRoute allowedRoles={['doctor']}>
+                    <DoctorAppointmentsPage />
                   </ProtectedRoute>
                 }
               />

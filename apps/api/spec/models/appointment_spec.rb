@@ -99,4 +99,15 @@ RSpec.describe Appointment do
       expect(build_appointment(field => nil)).to be_valid
     end
   end
+
+  it 'accepts a visit_notes value up to the column length and rejects over it' do
+    appointment = build_appointment(visit_notes: 'a' * 256)
+    expect(appointment).not_to be_valid
+
+    appointment.visit_notes = 'a' * 255
+    expect(appointment).to be_valid
+
+    appointment.visit_notes = nil
+    expect(appointment).to be_valid
+  end
 end

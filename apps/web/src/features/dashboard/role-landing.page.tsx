@@ -17,12 +17,20 @@ export default function RoleLandingPage() {
           Signed in as {user?.role}: {user?.first_name} {user?.last_name}
         </p>
         {user?.role === 'doctor' && (
-          <Link
-            to="/doctor/availability"
-            className="mt-4 inline-block rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700"
-          >
-            Manage Availability
-          </Link>
+          <>
+            <Link
+              to="/doctor/availability"
+              className="mt-4 inline-block rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700"
+            >
+              Manage Availability
+            </Link>
+            <Link
+              to="/doctor/appointments"
+              className="mt-4 inline-block rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700"
+            >
+              View Appointments
+            </Link>
+          </>
         )}
         {user?.role === 'patient' && (
           <>
