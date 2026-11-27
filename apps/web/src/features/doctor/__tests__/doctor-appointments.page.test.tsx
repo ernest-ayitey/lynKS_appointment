@@ -95,6 +95,22 @@ describe('DoctorAppointmentsPage', () => {
     expect(screen.getByLabelText('Date range')).toHaveValue('this_week');
   });
 
+  // Day and Export are out of scope per this plan's Global Constraints (no
+  // Day layout or Export format was ever specified) -- rendered as disabled
+  // placeholders rather than omitted entirely, so the screen communicates
+  // they're coming rather than looking unfinished. "List" is the only
+  // working view and is shown as the current selection.
+  it('renders Day/List/Export view-toggle controls, with Day and Export disabled', async () => {
+    renderPage();
+    await screen.findByText('No appointments to show.');
+
+    expect(screen.getByRole('button', { name: 'Day' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Export' })).toBeDisabled();
+    const listButton = screen.getByRole('button', { name: 'List' });
+    expect(listButton).toBeDisabled();
+    expect(listButton).toHaveAttribute('aria-current', 'true');
+  });
+
   it('renders the empty-state message, not an error or a crash, when the doctor has zero appointments', async () => {
     listDoctorAppointments.mockResolvedValueOnce({ appointments: [], total: 0 });
 
@@ -200,13 +216,17 @@ describe('DoctorAppointmentsPage', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Review' }));
 
     const panel = screen.getByRole('complementary');
+    expect(within(panel).getByText(/REQ-00001/)).toBeInTheDocument();
     expect(within(panel).getByText(/female/i)).toBeInTheDocument();
     expect(within(panel).getByText('34')).toBeInTheDocument();
     expect(within(panel).getByText('0551234567')).toBeInTheDocument();
     expect(within(panel).getByText('2026-12-01 at 09:00')).toBeInTheDocument();
     expect(within(panel).getByText('Follow Up')).toBeInTheDocument();
     expect(within(panel).getByText('Follow-up checkup')).toBeInTheDocument();
-    expect(within(panel).getByText('Dr. Kofi Mensah')).toBeInTheDocument();
+    // Not "Dr. Kofi Mensah" -- whoever approves an appointment is a Records
+    // user per the Records Approval plan, never a doctor, so a hardcoded
+    // "Dr." prefix here would misrepresent who actually approved it.
+    expect(within(panel).getByText('Kofi Mensah')).toBeInTheDocument();
     expect(screen.getByLabelText('Visit notes')).toHaveValue('Prior note text');
   });
 

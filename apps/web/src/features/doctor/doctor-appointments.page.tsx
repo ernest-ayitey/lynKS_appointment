@@ -162,7 +162,30 @@ export default function DoctorAppointmentsPage() {
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-8">
       <div className="mx-auto max-w-6xl space-y-6">
-        <h1 className="text-2xl font-semibold text-slate-900">Doctor appointments</h1>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-2xl font-semibold text-slate-900">Doctor appointments</h1>
+
+          {/* Day and Export have no spec'd layout/format for this plan (see
+              Global Constraints) -- shown as disabled placeholders rather
+              than omitted, so the screen reads as "more views are coming"
+              rather than unfinished. List is the only working view. */}
+          <div className="flex gap-2" role="group" aria-label="View">
+            <button type="button" disabled className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-400">
+              Day
+            </button>
+            <button
+              type="button"
+              disabled
+              aria-current="true"
+              className="rounded-md border border-slate-900 bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
+            >
+              List
+            </button>
+            <button type="button" disabled className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-400">
+              Export
+            </button>
+          </div>
+        </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-2">
@@ -263,6 +286,9 @@ export default function DoctorAppointmentsPage() {
             <aside className="w-full max-w-sm shrink-0 space-y-4 rounded-lg bg-white p-4 shadow sm:w-96">
               <div className="flex items-start justify-between gap-2">
                 <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                    Appointment {selected.ref}
+                  </p>
                   <p className="font-medium text-slate-900">
                     {selected.patient.first_name} {selected.patient.last_name}
                   </p>
@@ -302,7 +328,10 @@ export default function DoctorAppointmentsPage() {
                 <div>
                   <dt className="text-slate-500">Approved by</dt>
                   <dd className="text-slate-900">
-                    {selected.approved_by ? `Dr. ${selected.approved_by.first_name} ${selected.approved_by.last_name}` : '—'}
+                    {/* No "Dr." prefix: whoever approves an appointment is a
+                        Records-role user per the Records Approval plan, never
+                        a doctor. */}
+                    {selected.approved_by ? `${selected.approved_by.first_name} ${selected.approved_by.last_name}` : '—'}
                   </dd>
                 </div>
               </dl>
