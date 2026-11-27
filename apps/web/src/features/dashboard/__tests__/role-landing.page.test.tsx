@@ -20,7 +20,7 @@ function renderPage() {
 }
 
 describe('RoleLandingPage', () => {
-  it('renders a link to the doctor availability page when the user is a doctor', () => {
+  it('renders links to doctor availability and appointments pages when the user is a doctor', () => {
     useAuth.mockReturnValue({
       user: { role: 'doctor', first_name: 'Jane', last_name: 'Smith' },
       logout,
@@ -28,12 +28,16 @@ describe('RoleLandingPage', () => {
 
     renderPage();
 
-    const link = screen.getByRole('link', { name: /availability/i });
-    expect(link).toBeInTheDocument();
-    expect(link).toHaveAttribute('href', '/doctor/availability');
+    const availabilityLink = screen.getByRole('link', { name: /availability/i });
+    expect(availabilityLink).toBeInTheDocument();
+    expect(availabilityLink).toHaveAttribute('href', '/doctor/availability');
+
+    const appointmentsLink = screen.getByRole('link', { name: /appointments/i });
+    expect(appointmentsLink).toBeInTheDocument();
+    expect(appointmentsLink).toHaveAttribute('href', '/doctor/appointments');
   });
 
-  it('does not render a link to the doctor availability page when the user is not a doctor', () => {
+  it('does not render doctor links when the user is not a doctor', () => {
     useAuth.mockReturnValue({
       user: { role: 'patient', first_name: 'John', last_name: 'Doe' },
       logout,
@@ -42,6 +46,7 @@ describe('RoleLandingPage', () => {
     renderPage();
 
     expect(screen.queryByRole('link', { name: /availability/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /doctor.*appointments/i })).not.toBeInTheDocument();
   });
 
   it('renders links to book an appointment and my appointments pages when the user is a patient', () => {
