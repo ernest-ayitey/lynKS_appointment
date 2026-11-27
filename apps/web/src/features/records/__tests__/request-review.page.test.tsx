@@ -158,18 +158,25 @@ describe('RequestReviewPage', () => {
     expect(screen.getByLabelText('Message to patient')).toBeInTheDocument();
   });
 
-  it('the "Emails that will be sent" preview changes with the selected decision', async () => {
+  it('the emails-preview shows the patient\'s real email always, and a generic (never fabricated) doctor line only for non-decline decisions', async () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByTestId('request-ref');
 
-    expect(screen.getByTestId('emails-preview')).toHaveTextContent('Patient and doctor');
+    // Approve (default): patient's real email plus a generic doctor line —
+    // never a doctor email address, since the backend never sends one to
+    // this page.
+    expect(screen.getByTestId('emails-preview-patient')).toHaveTextContent('ama@example.com');
+    expect(screen.getByTestId('emails-preview-doctor')).toBeInTheDocument();
+    expect(screen.getByTestId('emails-preview-doctor')).not.toHaveTextContent('@');
 
     await user.click(screen.getByRole('radio', { name: 'Decline' }));
-    expect(screen.getByTestId('emails-preview')).toHaveTextContent('Patient only');
+    expect(screen.getByTestId('emails-preview-patient')).toHaveTextContent('ama@example.com');
+    expect(screen.queryByTestId('emails-preview-doctor')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('radio', { name: 'Approve a different slot' }));
-    expect(screen.getByTestId('emails-preview')).toHaveTextContent('Patient and doctor');
+    expect(screen.getByTestId('emails-preview-patient')).toHaveTextContent('ama@example.com');
+    expect(screen.getByTestId('emails-preview-doctor')).toBeInTheDocument();
   });
 
   it('the confirm button label changes with the selected decision', async () => {
@@ -388,6 +395,22 @@ describe('RequestReviewPage', () => {
     expect(screen.getByTestId('no-conflicts-line')).not.toHaveTextContent(/already booked/i);
   });
 
+  it('renders the slot grid without crashing when the requested date has zero free slots', async () => {
+    // A fully-booked day: the backend's free-times list for the requested
+    // date comes back empty (same data today's single conflict line
+    // already handles via the self-exception — see the test above).
+    getSlots.mockResolvedValue({ slots: [] });
+    renderPage();
+    await screen.findByTestId('request-ref');
+
+    await waitFor(() => expect(getSlots).toHaveBeenCalledWith(authedFetch, 10, REQUESTED_DATE));
+    expect(screen.getByTestId('slot-grid')).toBeInTheDocument();
+    // The self-exception still applies with zero other free slots: the
+    // requested slot itself renders as the sole, free, selected cell.
+    expect(screen.getByTestId('selected-slot-badge')).toHaveTextContent('Free');
+    expect(screen.getByTestId('no-conflicts-line')).toHaveTextContent(/this time is free/i);
+  });
+
   it('shows a conflict line for a genuinely unavailable alternate slot on a closed/unavailable day', async () => {
     // The requested date keeps the default (free: 10:00/11:00) mock; the
     // alternate date is a genuinely closed day with zero free times at
@@ -419,7 +442,7 @@ describe('RequestReviewPage', () => {
     timeSelect.appendChild(forcedOption);
     fireEvent.change(timeSelect, { target: { value: '09:00' } });
 
-    expect(screen.getByTestId('alt-slot-badge')).toHaveTextContent('Booked');
+    expect(screen.getByTestId('selected-slot-badge')).toHaveTextContent('Booked');
     expect(screen.getByTestId('no-conflicts-line')).toHaveTextContent(/already booked/i);
     expect(screen.getByTestId('no-conflicts-line')).not.toHaveTextContent(/this time is free/i);
   });
