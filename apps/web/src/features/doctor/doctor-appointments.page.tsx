@@ -160,9 +160,8 @@ export default function DoctorAppointmentsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-8">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="mx-auto max-w-6xl space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-semibold text-slate-900">Doctor appointments</h1>
 
           {/* Day and Export have no spec'd layout/format for this plan (see
@@ -379,7 +378,6 @@ export default function DoctorAppointmentsPage() {
             </aside>
           )}
         </div>
-      </div>
     </div>
   );
 }
