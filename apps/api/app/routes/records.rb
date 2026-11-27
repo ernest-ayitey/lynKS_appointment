@@ -28,6 +28,20 @@ class RecordsRoutes < ApiRoutes
   # or not one of the fixed, closed set in `Appointment::DECLINE_REASON_CODES`.
   REASON_REQUIRED_MESSAGE = "Select a reason: #{Appointment::DECLINE_REASON_CODES.join(', ')}"
 
+  # Human-readable label for each `Appointment::DECLINE_REASON_CODES` value,
+  # for `deliver_declined_email` below — `decline_reason_code` is the one
+  # REQUIRED field on a decline, yet without this map it never appeared
+  # anywhere in the patient-facing email (only the optional free-text
+  # `decline_message` did). Wording matches screen-specs.md:135's own labels
+  # for these codes, and request-review.page.tsx's `DECLINE_REASONS` — keep
+  # all three in sync by hand if any changes.
+  DECLINE_REASON_LABELS = {
+    'doctor_unavailable' => 'Doctor unavailable',
+    'slot_taken' => 'Slot already taken',
+    'needs_referral' => 'Needs referral first',
+    'other' => 'Other'
+  }.freeze
+
   # Field-level validation messages for `approve-alternate`'s target
   # date/time. This file's own copies of appointments.rb's identically
   # worded constants, per the established duplication-over-sharing
@@ -396,22 +410,29 @@ class RecordsRoutes < ApiRoutes
     # Sends `decline`'s single email, to the patient only — no doctor copy,
     # since a declined request never touched the doctor's schedule. Fields
     # per screen-specs.md:181-182 (EmailRejected): a "not approved" request
-    # detail line, a "Reason from Records" callout using `decline_message`,
-    # and a note that the requested slot has been released back for others
-    # to book.
+    # detail line, a "Reason from Records" callout, and a note that the
+    # requested slot has been released back for others to book.
+    #
+    # `decline_reason_code` is the one REQUIRED field on a decline — always
+    # present — so its mapped label always appears on its own line.
+    # `decline_message` is optional free text on top of that; it's appended
+    # only when actually given, rather than as a blank trailing line when
+    # Records picked a reason and left the message empty (the common case).
     def deliver_declined_email(appointment)
       doctor = appointment.doctor
+      reason_label = DECLINE_REASON_LABELS.fetch(appointment.decline_reason_code, appointment.decline_reason_code)
 
-      Mailer.deliver(
-        to: appointment.patient.email,
-        subject: 'Your appointment request was not approved',
-        body: "Doctor: #{doctor.first_name} #{doctor.last_name}\n" \
-              "Date: #{appointment.date.iso8601}\n" \
-              "Time: #{appointment.time}\n" \
-              "Reference: #{ref_for(appointment)}\n" \
-              "Reason from Records: #{appointment.decline_message}\n" \
-              'Your requested time has been released and is available to book again.'
-      )
+      body = "Doctor: #{doctor.first_name} #{doctor.last_name}\n" \
+             "Date: #{appointment.date.iso8601}\n" \
+             "Time: #{appointment.time}\n" \
+             "Reference: #{ref_for(appointment)}\n" \
+             "Reason from Records: #{reason_label}\n"
+      if appointment.decline_message && !appointment.decline_message.strip.empty?
+        body += "Message from Records: #{appointment.decline_message}\n"
+      end
+      body += 'Your requested time has been released and is available to book again.'
+
+      Mailer.deliver(to: appointment.patient.email, subject: 'Your appointment request was not approved', body: body)
     end
 
     # Mirrors appointments.rb's `parse_booking_date` — kept as a small,

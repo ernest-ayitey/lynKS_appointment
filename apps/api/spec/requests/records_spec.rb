@@ -372,6 +372,28 @@ RSpec.describe 'GET /api/v1/records/queue' do
       expect(deliveries.first[:to]).to eq(patient.email)
     end
 
+    it "includes the decline_reason_code's mapped label in the patient email, with the message appended when given" do
+      deliveries = []
+      allow(Mailer).to receive(:deliver) { |args| deliveries << args }
+
+      target = create_appointment(status: 'pending')
+      post_decline(records_token, target.id, decline_reason_code: 'needs_referral', decline_message: 'See a GP first.')
+
+      expect(deliveries.first[:body]).to include('Reason from Records: Needs referral first')
+      expect(deliveries.first[:body]).to include('Message from Records: See a GP first.')
+    end
+
+    it "includes the decline_reason_code's mapped label in the patient email even with no decline_message given" do
+      deliveries = []
+      allow(Mailer).to receive(:deliver) { |args| deliveries << args }
+
+      target = create_appointment(status: 'pending')
+      post_decline(records_token, target.id, decline_reason_code: 'doctor_unavailable')
+
+      expect(deliveries.first[:body]).to include('Reason from Records: Doctor unavailable')
+      expect(deliveries.first[:body]).not_to include('Message from Records:')
+    end
+
     it 'rejects a missing or out-of-set decline_reason_code with a field-level 422' do
       target = create_appointment(status: 'pending')
 
