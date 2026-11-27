@@ -4,9 +4,9 @@ services:
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: lynks_appointment
-      MYSQL_USER: lynks
-      MYSQL_PASSWORD: lynks_dev_pw
-      MYSQL_ROOT_PASSWORD: lynks_root_pw
+      MYSQL_USER: root
+      MYSQL_PASSWORD: General12@
+      MYSQL_ROOT_PASSWORD: General12@
     ports:
       - "3306:3306"
     volumes:
