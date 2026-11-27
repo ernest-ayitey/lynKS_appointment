@@ -66,7 +66,7 @@ export default function AppShell({ activeNavKey, children }: AppShellProps) {
   const items: NavItem[] = user && user.role in NAV_ITEMS ? NAV_ITEMS[user.role as keyof typeof NAV_ITEMS] : [];
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-100">
+    <div className="flex min-h-screen flex-col bg-slate-50">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-300 bg-white px-6 py-2">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-lg border-2 border-dashed border-slate-400" aria-hidden="true" />
@@ -99,7 +99,7 @@ export default function AppShell({ activeNavKey, children }: AppShellProps) {
                 aria-current={activeNavKey === item.key ? 'page' : undefined}
                 className={
                   activeNavKey === item.key
-                    ? 'rounded-md bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-900'
+                    ? 'rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white'
                     : 'rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100'
                 }
               >
