@@ -273,13 +273,25 @@ helper, `filter_by_patient_name(dataset, raw_search)`, matching
 `Sequel.ilike` against `first_name`/`last_name`, blank-is-no-filter) but
 looking up `patient_id` instead of `doctor_id`.
 
-Add the PATCH route with its own filter:
+Add the PATCH route with its own filter. **No existing body-parsing
+`before` block covers `/appointments/:id`** — the file's only body-parser
+is scoped to the literal path `/appointments` (the booking route), and
+per this same file's own established rule, a `before 'path'` filter
+matches that exact path string only, never as a prefix, so it does not
+also run for `/appointments/:id`. Add a new one, mirroring the existing
+one exactly:
 
 ```ruby
 before('/appointments/:id') do
-  # existing body-parsing block already here from Task 2 of the Patient
-  # Booking plan — the PATCH route reuses the already-parsed @payload,
-  # no new before block needed for parsing.
+  if request.body
+    request.body.rewind
+    parsed = JSON.parse(request.body.read)
+    @payload = parsed.is_a?(Hash) ? parsed : {}
+  else
+    @payload = {}
+  end
+rescue JSON::ParserError
+  @payload = {}
 end
 
 PATCHABLE_STATUSES = %w[completed no_show].freeze
