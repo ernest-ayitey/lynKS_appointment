@@ -161,6 +161,13 @@ RSpec.describe 'GET /api/v1/records/queue' do
   end
 
   describe 'POST /records/requests/:id/approve' do
+    # `create_appointment`'s default date (`Date.today + 10`) needs an
+    # explicit available day — `available_day?` treats "no row" as
+    # unavailable, and this plan's Fix 3 makes `approve` check that now.
+    let!(:default_request_date_availability) do
+      DoctorAvailabilityDay.create(user_id: doctor.id, date: Date.today + 10)
+    end
+
     it 'approves a pending request, sets decided_at/decided_by, and emails patient+doctor' do
       deliveries = []
       allow(Mailer).to receive(:deliver) { |args| deliveries << args }
@@ -214,6 +221,30 @@ RSpec.describe 'GET /api/v1/records/queue' do
         post_approve(TokenService.issue_access_token(other), target.id)
         expect(last_response.status).to eq(403)
       end
+    end
+
+    it 'rejects with 422 when the doctor has since marked the day unavailable' do
+      # A different date than `default_request_date_availability` covers, so
+      # no row exists for it at all — `available_day?` treats that as
+      # unavailable, exactly like a day the doctor explicitly closed after
+      # this request was submitted.
+      target = create_appointment(status: 'pending', date: Date.today + 11, time: '09:00')
+
+      post_approve(records_token, target.id)
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['error']).to eq('Doctor is not available on this date')
+      expect(Appointment[target.id].status).to eq('pending')
+    end
+
+    it 'rejects with 422 when the requested date has already passed' do
+      past_date = Date.today - 3
+      DoctorAvailabilityDay.create(user_id: doctor.id, date: past_date)
+      target = create_appointment(status: 'pending', date: past_date, time: '09:00')
+
+      post_approve(records_token, target.id)
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['error']).to eq('This time has already passed today')
+      expect(Appointment[target.id].status).to eq('pending')
     end
   end
 

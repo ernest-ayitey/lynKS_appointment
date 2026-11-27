@@ -150,22 +150,47 @@ class RecordsRoutes < ApiRoutes
   # appointments.rb: `halt` works by `throw`, not by raising, so throwing
   # through a transaction would leave Sequel's commit/rollback decision to
   # chance.
+  #
+  # Unlike `approve-alternate`, this route doesn't pick a new slot — it's
+  # keeping the request's existing one — so there's no *occupancy* check to
+  # run here (nothing else could have taken this exact row's own slot while
+  # it still occupies it). But the day itself can still have gone stale
+  # between submission and decision: a doctor can close a day that only has
+  # *pending* requests on it (closing only blocks on an *approved*
+  # appointment — see `PUT /doctor/availability`), and a pending request's
+  # date can simply pass while it sits in the queue. Both are re-checked
+  # here, under the same row lock as the `status` re-check, using the exact
+  # same `available_day?`/`parse_time_of_day`/`current_minute_of_day`
+  # helpers `approve-alternate` already uses for this. "Passed" covers both
+  # a date strictly before today (which `approve-alternate` would reject at
+  # submission time via `DATE_OUT_OF_RANGE_MESSAGE`, but which this route
+  # has to catch after the fact, since it never validates a submitted date
+  # at all) and today with a time-of-day that has already ticked by.
   post '/records/requests/:id/approve' do
     appointment = Appointment[params['id']]
     halt_json_error 404, NOT_FOUND_MESSAGE unless appointment
     halt_json_error 422, ALREADY_DECIDED_MESSAGE unless appointment.status == 'pending'
 
     already_decided = false
+    unavailable_day = false
+    time_in_past = false
     DB.transaction do
       appointment = Appointment.where(id: appointment.id).for_update.first
-      if appointment.status == 'pending'
+      if appointment.status != 'pending'
+        already_decided = true
+      elsif !available_day?(appointment.doctor, appointment.date)
+        unavailable_day = true
+      elsif appointment.date < Date.today ||
+            (appointment.date == Date.today && parse_time_of_day(appointment.time) <= current_minute_of_day)
+        time_in_past = true
+      else
         appointment.update(status: 'approved', decided_at: Time.now, decided_by_user_id: current_user.id,
                             internal_note: @payload['internal_note'] || appointment.internal_note)
-      else
-        already_decided = true
       end
     end
     halt_json_error 422, ALREADY_DECIDED_MESSAGE if already_decided
+    halt_json_error 422, DATE_UNAVAILABLE_MESSAGE if unavailable_day
+    halt_json_error 422, TIME_IN_PAST_MESSAGE if time_in_past
 
     deliver_approved_emails(appointment)
     json(request: request_json(appointment))
