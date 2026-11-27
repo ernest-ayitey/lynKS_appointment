@@ -46,7 +46,7 @@ describe('RoleLandingPage', () => {
     renderPage();
 
     expect(screen.queryByRole('link', { name: /availability/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /doctor.*appointments/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /view appointments/i })).not.toBeInTheDocument();
   });
 
   it('renders links to book an appointment and my appointments pages when the user is a patient', () => {
