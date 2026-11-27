@@ -83,6 +83,29 @@ describe('DoctorAppointmentsPage', () => {
     expect(screen.getByText('Kofi Mensah')).toBeInTheDocument();
   });
 
+  it('renders the empty-state message, not an error or a crash, when the doctor has zero appointments', async () => {
+    listDoctorAppointments.mockResolvedValueOnce({ appointments: [], total: 0 });
+
+    renderPage();
+
+    expect(await screen.findByText('No appointments to show.')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('renders the same empty-state message when a date-range filter matches nothing', async () => {
+    listDoctorAppointments.mockResolvedValueOnce({ appointments: [], total: 0 }); // initial mount
+    listDoctorAppointments.mockResolvedValueOnce({ appointments: [], total: 0 }); // after preset re-fetch
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(listDoctorAppointments).toHaveBeenCalledTimes(1));
+
+    await user.selectOptions(screen.getByLabelText('Date range'), 'today');
+
+    await waitFor(() => expect(listDoctorAppointments).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('No appointments to show.')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('typing in the search box re-fetches with the search term', async () => {
     const user = userEvent.setup();
     renderPage();
