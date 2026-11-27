@@ -825,6 +825,18 @@ RSpec.describe 'GET /api/v1/doctor/appointments and PATCH /api/v1/appointments/:
       expect(appointment.refresh.status).to eq('approved')
     end
 
+    it 'rejects a visit_notes value over 255 characters with 422, not an unhandled 500, and leaves the appointment unchanged' do
+      appointment = create_appointment(status: 'approved')
+
+      patch_appointment(doctor_token, appointment.id, status: 'completed', visit_notes: 'a' * 256)
+
+      expect(last_response.status).to eq(422)
+      body = JSON.parse(last_response.body)
+      expect(body['errors']).to include('visit_notes' => a_kind_of(String))
+      expect(appointment.refresh.status).to eq('approved')
+      expect(appointment.refresh.visit_notes).to be_nil
+    end
+
     %w[pending declined cancelled completed no_show].each do |non_approved_status|
       it "rejects marking an already-#{non_approved_status} appointment with 422" do
         appointment = create_appointment(status: non_approved_status)

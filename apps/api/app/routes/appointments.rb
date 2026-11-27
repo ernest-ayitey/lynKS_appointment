@@ -22,6 +22,7 @@ class AppointmentRoutes < ApiRoutes
   NOT_FOUND_MESSAGE = 'Not found'
   ALREADY_FINAL_MESSAGE = 'This appointment can no longer be cancelled'
   PATCHABLE_STATUSES = %w[completed no_show].freeze
+  VISIT_NOTES_TOO_LONG_MESSAGE = 'Visit notes must be 255 characters or fewer'
 
   ISO_DATE = /\A\d{4}-\d{2}-\d{2}\z/
 
@@ -234,8 +235,19 @@ class AppointmentRoutes < ApiRoutes
     dataset = filter_by_patient_name(dataset, params['search'])
     dataset = filter_by_date_range(dataset, params['from'], params['to'])
 
-    appointments = dataset.order(:date, :time).all
-    json(appointments: appointments.map { |a| doctor_appointment_json(a) }, total: appointments.size)
+    # `.eager(:patient)` plus one bulk `approved_by_by_id` hash built up
+    # front, so this doesn't introduce an N+1 the same way Task 1's `GET
+    # /appointments` and records.rb's `GET /records/queue` already avoid one
+    # for their own per-row associations — see those routes' own comments on
+    # this exact pattern.
+    appointments = dataset.eager(:patient).order(:date, :time).all
+    approved_by_ids = appointments.map(&:decided_by_user_id).compact.uniq
+    approved_by_by_id = User.where(id: approved_by_ids).as_hash(:id)
+
+    json(
+      appointments: appointments.map { |a| doctor_appointment_json(a, approved_by: approved_by_by_id[a.decided_by_user_id]) },
+      total: appointments.size
+    )
   end
 
   # Same ownership-scoped lookup (and therefore the same 404 for "doesn't
@@ -258,8 +270,24 @@ class AppointmentRoutes < ApiRoutes
       halt_json_error 422, VALIDATION_FAILED_MESSAGE, status: 'Only an approved appointment can be marked completed or no-show'
     end
 
-    appointment.update(status: new_status, visit_notes: @payload['visit_notes'])
-    json(doctor_appointment_json(appointment))
+    # `Appointment#validate`'s `validates_max_length 255, :visit_notes` would
+    # catch an over-length value too, but only by raising
+    # `Sequel::ValidationFailed` out of `update` (since `raise_on_save_failure`
+    # defaults to true) — and this app's `error 500` handler (api_base.rb) has
+    # no handler for that exception, so it would surface as an unhandled 500
+    # instead of a 422. A non-String value (e.g. an integer) would fare worse:
+    # `validates_max_length` calls `.length` on it and raises `NoMethodError`,
+    # also an unhandled 500. Pre-checking here, the same way `status` above
+    # is pre-checked rather than left to the model, keeps this route's error
+    # envelope consistent for every rejection reason.
+    visit_notes = @payload['visit_notes']
+    unless visit_notes.nil? || (visit_notes.is_a?(String) && visit_notes.length <= 255)
+      halt_json_error 422, VALIDATION_FAILED_MESSAGE, visit_notes: VISIT_NOTES_TOO_LONG_MESSAGE
+    end
+
+    appointment.update(status: new_status, visit_notes: visit_notes)
+    approved_by_user = appointment.decided_by_user_id && User[appointment.decided_by_user_id]
+    json(doctor_appointment_json(appointment, approved_by: approved_by_user))
   end
 
   helpers do
@@ -461,9 +489,8 @@ class AppointmentRoutes < ApiRoutes
     # and demographic details a doctor needs (`phone`, `sex`, `age`)
     # instead of the doctor/department identity a patient already knows,
     # and adds `approved_by`/`visit_notes`, which patients never see.
-    def doctor_appointment_json(appointment)
+    def doctor_appointment_json(appointment, approved_by: nil)
       patient = appointment.patient
-      approved_by_user = appointment.decided_by_user_id && User[appointment.decided_by_user_id]
 
       {
         id: appointment.id,
@@ -482,7 +509,7 @@ class AppointmentRoutes < ApiRoutes
         visit_type: appointment.visit_type,
         reason: appointment.reason,
         status: appointment.status,
-        approved_by: approved_by_user && { id: approved_by_user.id, first_name: approved_by_user.first_name, last_name: approved_by_user.last_name },
+        approved_by: approved_by && { id: approved_by.id, first_name: approved_by.first_name, last_name: approved_by.last_name },
         visit_notes: appointment.visit_notes
       }
     end

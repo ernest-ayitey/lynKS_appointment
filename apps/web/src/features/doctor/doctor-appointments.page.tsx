@@ -88,7 +88,14 @@ export default function DoctorAppointmentsPage() {
   const { authedFetch } = useAuth();
 
   const [search, setSearch] = useState('');
-  const [datePreset, setDatePreset] = useState<DateRangePreset>('');
+  // Defaults to "This week" rather than "All dates": the backend's `GET
+  // /doctor/appointments` sorts ascending by (date, time) with no implicit
+  // date filter (intentionally — see that route's own comment), so an
+  // all-dates default would bury today's work under months of completed
+  // history on a landing view. Reuses the exact same preset computation
+  // (`dateRangeForPreset`) the date-range `<select>` already uses, rather
+  // than inventing a separate initial-filter path.
+  const [datePreset, setDatePreset] = useState<DateRangePreset>('this_week');
   const [appointments, setAppointments] = useState<DoctorAppointment[]>([]);
   const [listBanner, setListBanner] = useState<string | null>(null);
   const [actionBanner, setActionBanner] = useState<string | null>(null);
@@ -136,7 +143,17 @@ export default function DoctorAppointmentsPage() {
       // refetch-after-action pattern.
       await refetch();
     } catch (err) {
-      setActionBanner(err instanceof ApiError ? err.message : GENERIC_ERROR_MESSAGE);
+      // The real PATCH /appointments/:id 422 always carries the generic
+      // 'Please correct the highlighted fields' as `message` and the
+      // actionable detail under `errors.status` — `status` isn't a form
+      // field on this screen, so the generic message alone would tell the
+      // doctor nothing. Mirrors DoctorAvailabilityPage's own
+      // `err.errors?.dates ?? err.message` precedent for the same shape.
+      if (err instanceof ApiError) {
+        setActionBanner(err.errors?.status ?? err.message);
+      } else {
+        setActionBanner(GENERIC_ERROR_MESSAGE);
+      }
     } finally {
       setActingId(null);
     }
@@ -194,12 +211,13 @@ export default function DoctorAppointmentsPage() {
                   <th className="px-4 py-2 font-medium">Patient</th>
                   <th className="px-4 py-2 font-medium">Reason</th>
                   <th className="px-4 py-2 font-medium">Status</th>
+                  <th className="px-4 py-2 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {appointments.length === 0 && !listBanner && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
+                    <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
                       No appointments to show.
                     </td>
                   </tr>
@@ -208,11 +226,7 @@ export default function DoctorAppointmentsPage() {
                 {appointments.map((appointment) => (
                   <tr
                     key={appointment.id}
-                    onClick={() => openRow(appointment)}
-                    aria-selected={appointment.id === selectedId}
-                    className={`cursor-pointer hover:bg-slate-50 ${
-                      appointment.id === selectedId ? 'bg-slate-50' : ''
-                    }`}
+                    className={appointment.id === selectedId ? 'bg-slate-50' : ''}
                   >
                     <td className="px-4 py-2 text-slate-900">{appointment.date}</td>
                     <td className="px-4 py-2 text-slate-900">{appointment.time}</td>
@@ -229,6 +243,15 @@ export default function DoctorAppointmentsPage() {
                       >
                         {formatStatus(appointment.status)}
                       </span>
+                    </td>
+                    <td className="px-4 py-2">
+                      <button
+                        type="button"
+                        onClick={() => openRow(appointment)}
+                        className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Review
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -293,6 +316,7 @@ export default function DoctorAppointmentsPage() {
                   value={visitNotes}
                   onChange={(event) => setVisitNotes(event.target.value)}
                   rows={4}
+                  maxLength={255}
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>

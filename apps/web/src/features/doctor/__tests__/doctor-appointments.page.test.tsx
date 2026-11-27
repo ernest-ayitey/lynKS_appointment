@@ -72,15 +72,27 @@ describe('DoctorAppointmentsPage', () => {
     listDoctorAppointments.mockResolvedValue({ appointments: [], total: 0 });
   });
 
-  it('loads the list on mount with no filters and renders the returned rows', async () => {
+  // The backend's `GET /doctor/appointments` sorts ascending by (date, time)
+  // with no implicit date filter, so an all-dates default would bury today's
+  // work under months of completed history. The page defaults its date-range
+  // filter to "This week" rather than "All dates" to compensate — this is the
+  // same `dateRangeForPreset('this_week')` computation the date-range
+  // `<select>` itself uses for the explicit preset.
+  it('loads the list on mount defaulted to the This week date range, not all dates', async () => {
     const rows = [doctorAppointment({ id: 1 }), doctorAppointment({ id: 2, patient: { id: 2, first_name: 'Kofi', last_name: 'Mensah', phone: null, sex: null, age: null } })];
     listDoctorAppointments.mockResolvedValueOnce({ appointments: rows, total: 2 });
 
     renderPage();
 
-    await waitFor(() => expect(listDoctorAppointments).toHaveBeenCalledWith(authedFetch, {}));
+    const today = new Date();
+    const expectedFrom = isoDate(startOfWeek(today));
+    const expectedTo = isoDate(endOfWeek(today));
+    await waitFor(() =>
+      expect(listDoctorAppointments).toHaveBeenCalledWith(authedFetch, { from: expectedFrom, to: expectedTo }),
+    );
     expect(await screen.findByText('Ama Boateng')).toBeInTheDocument();
     expect(screen.getByText('Kofi Mensah')).toBeInTheDocument();
+    expect(screen.getByLabelText('Date range')).toHaveValue('this_week');
   });
 
   it('renders the empty-state message, not an error or a crash, when the doctor has zero appointments', async () => {
@@ -106,15 +118,22 @@ describe('DoctorAppointmentsPage', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('typing in the search box re-fetches with the search term', async () => {
+  it('typing in the search box re-fetches with the search term, keeping the default This week range', async () => {
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(listDoctorAppointments).toHaveBeenCalledTimes(1));
 
     await user.type(screen.getByRole('searchbox'), 'Ama');
 
+    const today = new Date();
+    const expectedFrom = isoDate(startOfWeek(today));
+    const expectedTo = isoDate(endOfWeek(today));
     await waitFor(() =>
-      expect(listDoctorAppointments).toHaveBeenLastCalledWith(authedFetch, { search: 'Ama' }),
+      expect(listDoctorAppointments).toHaveBeenLastCalledWith(authedFetch, {
+        search: 'Ama',
+        from: expectedFrom,
+        to: expectedTo,
+      }),
     );
   });
 
@@ -131,10 +150,18 @@ describe('DoctorAppointmentsPage', () => {
     );
   });
 
-  it('selecting the This week date-range preset re-fetches with the Monday-Sunday range', async () => {
+  it('re-selecting the This week date-range preset (after switching away) re-fetches with the Monday-Sunday range', async () => {
+    // "This week" is already the default on mount (see the mount test
+    // above), so this exercises the explicit `<select>` path instead:
+    // switch away to "Today" first, then back to "This week", and confirm
+    // it recomputes the same Monday-Sunday range rather than this only ever
+    // working as an initial-state fluke.
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(listDoctorAppointments).toHaveBeenCalledTimes(1));
+
+    await user.selectOptions(screen.getByLabelText('Date range'), 'today');
+    await waitFor(() => expect(listDoctorAppointments).toHaveBeenCalledTimes(2));
 
     await user.selectOptions(screen.getByLabelText('Date range'), 'this_week');
 
@@ -170,7 +197,7 @@ describe('DoctorAppointmentsPage', () => {
     renderPage();
     await screen.findByText('Ama Boateng');
 
-    await userEvent.setup().click(screen.getByText('Ama Boateng'));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Review' }));
 
     const panel = screen.getByRole('complementary');
     expect(within(panel).getByText(/female/i)).toBeInTheDocument();
@@ -195,7 +222,7 @@ describe('DoctorAppointmentsPage', () => {
     renderPage();
     await screen.findByText('Ama Boateng');
 
-    await userEvent.setup().click(screen.getByText('Ama Boateng'));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Review' }));
 
     expect(screen.getByLabelText('Visit notes')).toHaveValue('');
     const dashes = screen.getAllByText('—');
@@ -211,7 +238,7 @@ describe('DoctorAppointmentsPage', () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByText('Ama Boateng');
-    await user.click(screen.getByText('Ama Boateng'));
+    await user.click(screen.getByRole('button', { name: 'Review' }));
 
     await user.click(screen.getByRole('button', { name: 'Mark completed' }));
 
@@ -230,7 +257,7 @@ describe('DoctorAppointmentsPage', () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByText('Ama Boateng');
-    await user.click(screen.getByText('Ama Boateng'));
+    await user.click(screen.getByRole('button', { name: 'Review' }));
 
     await user.click(screen.getByRole('button', { name: 'No-show' }));
 
@@ -246,29 +273,56 @@ describe('DoctorAppointmentsPage', () => {
 
     renderPage();
     await screen.findByText('Ama Boateng');
-    await userEvent.setup().click(screen.getByText('Ama Boateng'));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Review' }));
 
     expect(screen.queryByRole('button', { name: 'Mark completed' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'No-show' })).not.toBeInTheDocument();
   });
 
-  it('renders a 422 banner when markAppointmentOutcome fails, without silently swallowing it', async () => {
+  // The real PATCH /appointments/:id 422 always carries the generic
+  // 'Please correct the highlighted fields' as the top-level `error` and the
+  // actionable detail under `errors.status` — `status` isn't a form field on
+  // this screen, so the banner must show the field detail, not the generic
+  // message. An earlier version of this test constructed the ApiError with
+  // the actionable text as the top-level `message`, a shape the backend
+  // never actually sends, which is how the "banner shows only the generic
+  // message" bug got through. Mirrors
+  // doctor-availability.page.test.tsx's equivalent fixture.
+  it('renders the field-level error banner when markAppointmentOutcome fails with a 422, not the generic message', async () => {
     const row = doctorAppointment({ id: 42, status: 'approved' });
     listDoctorAppointments.mockResolvedValueOnce({ appointments: [row], total: 1 });
     markAppointmentOutcome.mockRejectedValueOnce(
-      new ApiError('Only an approved appointment can be marked completed or no-show', 422),
+      new ApiError('Please correct the highlighted fields', 422, {
+        status: 'Only an approved appointment can be marked completed or no-show',
+      }),
     );
 
     const user = userEvent.setup();
     renderPage();
     await screen.findByText('Ama Boateng');
-    await user.click(screen.getByText('Ama Boateng'));
+    await user.click(screen.getByRole('button', { name: 'Review' }));
 
     await user.click(screen.getByRole('button', { name: 'Mark completed' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Only an approved appointment can be marked completed or no-show',
     );
+    expect(screen.queryByText('Please correct the highlighted fields')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the generic message when markAppointmentOutcome fails with no field errors', async () => {
+    const row = doctorAppointment({ id: 42, status: 'approved' });
+    listDoctorAppointments.mockResolvedValueOnce({ appointments: [row], total: 1 });
+    markAppointmentOutcome.mockRejectedValueOnce(new ApiError('Session expired', 401));
+
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Ama Boateng');
+    await user.click(screen.getByRole('button', { name: 'Review' }));
+
+    await user.click(screen.getByRole('button', { name: 'Mark completed' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Session expired');
   });
 
   it('shows a generic error banner when the initial load fails with a non-ApiError rejection', async () => {
