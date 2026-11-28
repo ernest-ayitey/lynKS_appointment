@@ -65,12 +65,6 @@ function timeToMinutes(time: string): number {
   return hours * 60 + minutes;
 }
 
-function minutesToTime(totalMinutes: number): string {
-  const hours = Math.floor(totalMinutes / 60) % 24;
-  const minutes = totalMinutes % 60;
-  return `${pad(hours)}:${pad(minutes)}`;
-}
-
 function formatTodayHeader(date: Date): string {
   return `Today · ${WEEKDAY_NAMES[date.getDay()]} ${date.getDate()} ${MONTH_NAMES[date.getMonth()]}`;
 }
@@ -88,26 +82,38 @@ type ScheduleRow =
   | { kind: 'appointment'; appointment: DoctorAppointment }
   | { kind: 'open-slot'; time: string; key: string };
 
-// Inserts an "Open slot" row wherever one appointment's end time
-// (time + duration_minutes) doesn't reach the next appointment's start time
-// -- using only the appointment data already fetched for today's schedule,
-// not a separate getSlots call. Sorted by time first so the result reads in
-// time order regardless of what order the API happened to return rows in.
-function buildScheduleRows(appointments: DoctorAppointment[]): ScheduleRow[] {
-  const sorted = [...appointments].sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
-  const rows: ScheduleRow[] = [];
-  sorted.forEach((appointment, index) => {
-    if (index > 0) {
-      const previous = sorted[index - 1];
-      const previousEnd = timeToMinutes(previous.time) + previous.duration_minutes;
-      const gap = timeToMinutes(appointment.time) - previousEnd;
-      if (gap > 0) {
-        rows.push({ kind: 'open-slot', time: minutesToTime(previousEnd), key: `gap-${previousEnd}` });
-      }
-    }
-    rows.push({ kind: 'appointment', appointment });
+// Builds today's schedule rows by merging the day's appointments with
+// `todaySlots` -- the doctor's real free slots for today, from the exact
+// same `getSlots` call the "full day" widget below already uses. A slot
+// counts as an "Open slot" row only when it doesn't fall inside any
+// appointment's own [time, time + duration_minutes) range; every other
+// slot is already booked. This is deliberately not derived from
+// `duration_minutes` gap-math alone: `getSlots` already excludes the
+// doctor's break window and respects their session start/end (same
+// endpoint the booking flow itself uses), so it's the only source that can
+// tell a genuine open slot apart from a lunch break -- and it naturally
+// produces a trailing "Open slot" row after the day's last appointment
+// too (the wireframe's own "14:00 · Open slot" example), which pure
+// between-appointments gap math could never produce.
+function buildScheduleRows(appointments: DoctorAppointment[], todaySlots: string[]): ScheduleRow[] {
+  const occupiedRanges = appointments.map((appointment) => ({
+    start: timeToMinutes(appointment.time),
+    end: timeToMinutes(appointment.time) + appointment.duration_minutes,
+  }));
+  const openSlotTimes = todaySlots.filter((slot) => {
+    const minutes = timeToMinutes(slot);
+    return !occupiedRanges.some((range) => minutes >= range.start && minutes < range.end);
   });
-  return rows;
+
+  const rows: ScheduleRow[] = [
+    ...appointments.map((appointment): ScheduleRow => ({ kind: 'appointment', appointment })),
+    ...openSlotTimes.map((time): ScheduleRow => ({ kind: 'open-slot', time, key: `gap-${time}` })),
+  ];
+  return rows.sort((a, b) => {
+    const timeA = a.kind === 'appointment' ? a.appointment.time : a.time;
+    const timeB = b.kind === 'appointment' ? b.appointment.time : b.time;
+    return timeToMinutes(timeA) - timeToMinutes(timeB);
+  });
 }
 
 // The chronologically-next `approved`/`arrived` appointment in today's
@@ -161,6 +167,7 @@ export default function DoctorDashboardPage() {
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [schedule, setSchedule] = useState<DoctorAppointment[]>([]);
+  const [todaySlots, setTodaySlots] = useState<string[]>([]);
   const [emails, setEmails] = useState<RecentEmail[]>([]);
   const [availableDays, setAvailableDays] = useState<AvailableDayTag[]>([]);
   const [listBanner, setListBanner] = useState<string | null>(null);
@@ -172,14 +179,23 @@ export default function DoctorDashboardPage() {
     try {
       const today = new Date();
       const todayIso = isoDate(today);
-      const [statsResponse, scheduleResponse, emailsResponse, availableDaysResponse] = await Promise.all([
-        getDashboardStats(authedFetch),
-        listDoctorAppointments(authedFetch, { from: todayIso, to: todayIso }),
-        getRecentEmails(authedFetch),
-        user ? loadUpcomingAvailableDays(authedFetch, user.id, today) : Promise.resolve([]),
-      ]);
+      const [statsResponse, scheduleResponse, todaySlotsResponse, emailsResponse, availableDaysResponse] =
+        await Promise.all([
+          getDashboardStats(authedFetch),
+          listDoctorAppointments(authedFetch, { from: todayIso, to: todayIso }),
+          // Same `getSlots` endpoint the "next available days" widget below
+          // uses, called for today specifically -- it already excludes the
+          // doctor's break window and respects their session start/end, so
+          // diffing it against today's booked appointments (in
+          // buildScheduleRows) gives genuinely correct "Open slot" rows
+          // instead of naive gap math between appointment times.
+          user ? getSlots(authedFetch, user.id, todayIso) : Promise.resolve({ slots: [] }),
+          getRecentEmails(authedFetch),
+          user ? loadUpcomingAvailableDays(authedFetch, user.id, today) : Promise.resolve([]),
+        ]);
       setStats(statsResponse);
       setSchedule(scheduleResponse.appointments);
+      setTodaySlots(todaySlotsResponse.slots);
       setEmails(emailsResponse.emails);
       setAvailableDays(availableDaysResponse);
     } catch (err) {
@@ -218,7 +234,7 @@ export default function DoctorDashboardPage() {
 
   const today = new Date();
   const nextAppointmentId = computeNextAppointmentId(schedule, today);
-  const scheduleRows = buildScheduleRows(schedule);
+  const scheduleRows = buildScheduleRows(schedule, todaySlots);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">

@@ -79,7 +79,12 @@ describe('DoctorDashboardPage', () => {
     getRecentEmails.mockResolvedValue({ emails: [] });
     listDoctorAppointments.mockResolvedValue({ appointments: [], total: 0 });
     getAvailability.mockResolvedValue({ days: [] });
-    getSlots.mockResolvedValue({ slots: ['09:00'] });
+    // Empty by default -- a non-empty default would otherwise sneak a
+    // spurious "Open slot" row into the empty-schedule test below, since
+    // getSlots is now the real source of those rows for today. Tests that
+    // need free slots (today's-schedule gap tests, the full-day-tagging
+    // test) set their own getSlots return value explicitly.
+    getSlots.mockResolvedValue({ slots: [] });
   });
 
   afterAll(() => {
@@ -140,6 +145,12 @@ describe('DoctorDashboardPage', () => {
       }),
     ];
     listDoctorAppointments.mockResolvedValueOnce({ appointments: rows, total: 4 });
+    // getSlots is the real source of "Open slot" rows (not duration_minutes
+    // gap math) -- '09:00' is already occupied by appointment #1 so it's
+    // filtered out as a free slot; '09:40' (appointment #2's end time, free
+    // until #3 starts at 10:30) is the one genuine open slot in this
+    // fixture.
+    getSlots.mockResolvedValueOnce({ slots: ['09:00', '09:40'] });
 
     renderPage();
 
@@ -161,6 +172,69 @@ describe('DoctorDashboardPage', () => {
     // #3 at 10:30, not simply "the first approved one in the list" (#4).
     expect(within(section).getByText('Next')).toBeInTheDocument();
     expect(within(section).queryAllByText('Approved')).toHaveLength(1);
+  });
+
+  // Reviewer finding: pure duration_minutes gap-math between appointments
+  // can never produce a *trailing* gap after the last appointment -- but
+  // the wireframe (DoctorDashboard.dc.html:61) explicitly shows exactly
+  // that ("14:00 · Open slot" after the 11:30 appointment, nothing
+  // following it). getSlots-diffing fixes this for free: any free slot at
+  // or after the last appointment's end time still shows up.
+  it("renders a trailing Open-slot row after the day's last appointment, matching the wireframe's own example", async () => {
+    const row = doctorAppointment({
+      id: 1,
+      time: '09:00',
+      duration_minutes: 20,
+      status: 'completed',
+      patient: { id: 1, first_name: 'Yaw', last_name: 'Boakye', phone: null, sex: null, age: null },
+    });
+    listDoctorAppointments.mockResolvedValueOnce({ appointments: [row], total: 1 });
+    // '09:00' is occupied by the appointment above; '14:00' is free and
+    // comes well after the appointment ends -- a trailing gap, not a gap
+    // between two appointments.
+    getSlots.mockResolvedValueOnce({ slots: ['09:00', '14:00'] });
+
+    renderPage();
+
+    const section = (await screen.findByText("Today's schedule")).closest('section') as HTMLElement;
+    await within(section).findByText('Yaw Boakye', { exact: false });
+
+    expect(within(section).getByText('14:00')).toBeInTheDocument();
+    expect(within(section).getByText('Open slot')).toBeInTheDocument();
+    expect(within(section).queryAllByText('Open slot')).toHaveLength(1);
+    const text = section.textContent ?? '';
+    expect(text.indexOf('09:00')).toBeLessThan(text.indexOf('14:00'));
+  });
+
+  // Reviewer finding: getSlots already excludes the doctor's break window,
+  // so a lunch break between two appointments must never be mislabeled as
+  // bookable "Open slot" time, even though there's a real time gap there.
+  it('does not render an Open-slot row for a lunch-break gap between two appointments', async () => {
+    const morning = doctorAppointment({
+      id: 1,
+      time: '09:00',
+      duration_minutes: 180, // ends at 12:00
+      status: 'completed',
+      patient: { id: 1, first_name: 'Yaw', last_name: 'Boakye', phone: null, sex: null, age: null },
+    });
+    const afternoon = doctorAppointment({
+      id: 2,
+      time: '13:00', // the 12:00-13:00 break sits entirely between these two
+      duration_minutes: 20,
+      status: 'approved',
+      patient: { id: 2, first_name: 'Esi', last_name: 'Quaye', phone: null, sex: null, age: null },
+    });
+    listDoctorAppointments.mockResolvedValueOnce({ appointments: [morning, afternoon], total: 2 });
+    // getSlots never offers a break-time slot -- the only slot it returns
+    // is '09:00', which is already occupied by the morning appointment.
+    getSlots.mockResolvedValueOnce({ slots: ['09:00'] });
+
+    renderPage();
+
+    const section = (await screen.findByText("Today's schedule")).closest('section') as HTMLElement;
+    await within(section).findByText('Esi Quaye', { exact: false });
+
+    expect(within(section).queryByText('Open slot')).not.toBeInTheDocument();
   });
 
   it('clicking Mark arrived on the next appointment calls markAppointmentOutcome and refetches', async () => {
