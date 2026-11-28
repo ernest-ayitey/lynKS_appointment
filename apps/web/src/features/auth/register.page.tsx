@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
+import AuthCard from '../../components/auth-card';
 import { ApiError } from '../../lib/api-client';
 import { GENERIC_ERROR_MESSAGE, applyApiError } from '../../lib/api-error-handling';
 import { useAuth } from '../../lib/auth-context';
@@ -123,49 +124,53 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-8">
-      <div className="w-full max-w-md rounded-lg bg-white p-8 shadow">
-        <h1 className="mb-6 text-center text-2xl font-semibold text-slate-900">Create an account</h1>
+    <AuthCard
+      title="Create your patient account"
+      subtitle="Your account is created with the Patient role. Staff accounts are set up by the clinic admin."
+      maxWidth="wide"
+    >
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-6" noValidate>
+        {formError && (
+          <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+            {formError}
+          </div>
+        )}
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
-          {formError && (
-            <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-              {formError}
-            </div>
-          )}
+        <fieldset className="m-0 grid grid-cols-1 gap-4 border-0 p-0 sm:grid-cols-2">
+          <legend className="col-span-full mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
+            Personal details
+          </legend>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="firstName" className="block text-sm font-medium text-slate-700">
-                First name
-              </label>
-              <input
-                id="firstName"
-                type="text"
-                autoComplete="given-name"
-                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                {...register('firstName', { required: true })}
-              />
-              {errors.firstName && (
-                <p className="mt-1 text-sm text-red-600">{errors.firstName.message}</p>
-              )}
-            </div>
+          <div>
+            <label htmlFor="firstName" className="block text-sm font-medium text-slate-700">
+              First name
+            </label>
+            <input
+              id="firstName"
+              type="text"
+              autoComplete="given-name"
+              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              {...register('firstName', { required: true })}
+            />
+            {errors.firstName && (
+              <p className="mt-1 text-sm text-red-600">{errors.firstName.message}</p>
+            )}
+          </div>
 
-            <div>
-              <label htmlFor="lastName" className="block text-sm font-medium text-slate-700">
-                Last name
-              </label>
-              <input
-                id="lastName"
-                type="text"
-                autoComplete="family-name"
-                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                {...register('lastName', { required: true })}
-              />
-              {errors.lastName && (
-                <p className="mt-1 text-sm text-red-600">{errors.lastName.message}</p>
-              )}
-            </div>
+          <div>
+            <label htmlFor="lastName" className="block text-sm font-medium text-slate-700">
+              Last name
+            </label>
+            <input
+              id="lastName"
+              type="text"
+              autoComplete="family-name"
+              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              {...register('lastName', { required: true })}
+            />
+            {errors.lastName && (
+              <p className="mt-1 text-sm text-red-600">{errors.lastName.message}</p>
+            )}
           </div>
 
           <div>
@@ -230,8 +235,14 @@ export default function RegisterPage() {
             />
             {errors.phone && <p className="mt-1 text-sm text-red-600">{errors.phone.message}</p>}
           </div>
+        </fieldset>
 
-          <div>
+        <fieldset className="m-0 grid grid-cols-1 gap-4 border-0 p-0 sm:grid-cols-2">
+          <legend className="col-span-full mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
+            Login details
+          </legend>
+
+          <div className="sm:col-span-2">
             <label htmlFor="username" className="block text-sm font-medium text-slate-700">
               Username
             </label>
@@ -294,7 +305,9 @@ export default function RegisterPage() {
               <p className="mt-1 text-sm text-red-600">{errors.passwordConfirmation.message}</p>
             )}
           </div>
+        </fieldset>
 
+        <div>
           <label htmlFor="acceptTerms" className="flex items-start gap-2 text-sm text-slate-700">
             <input
               id="acceptTerms"
@@ -307,23 +320,25 @@ export default function RegisterPage() {
           {errors.acceptTerms && (
             <p className="mt-1 text-sm text-red-600">{errors.acceptTerms.message}</p>
           )}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-slate-600">
+            Already have an account?{' '}
+            <Link to="/login" className="text-blue-600 hover:underline">
+              Sign in
+            </Link>
+          </p>
 
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
           >
             Create account
           </button>
-        </form>
-
-        <p className="mt-6 text-center text-sm text-slate-600">
-          Already have an account?{' '}
-          <Link to="/login" className="text-blue-600 hover:underline">
-            Sign in
-          </Link>
-        </p>
-      </div>
-    </div>
+        </div>
+      </form>
+    </AuthCard>
   );
 }

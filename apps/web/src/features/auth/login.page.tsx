@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
+import AuthSplitLayout from '../../components/auth-split-layout';
 import { ApiError } from '../../lib/api-client';
 import { GENERIC_ERROR_MESSAGE } from '../../lib/api-error-handling';
 import { useAuth } from '../../lib/auth-context';
@@ -41,11 +42,16 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <div className="w-full max-w-sm rounded-lg bg-white p-8 shadow">
-        <h1 className="mb-6 text-center text-2xl font-semibold text-slate-900">Sign in</h1>
+    <AuthSplitLayout>
+      <div className="flex w-full max-w-[400px] flex-col gap-5 rounded-xl border border-slate-300 bg-white p-8">
+        <div className="flex flex-col gap-1.5">
+          <h2 className="text-2xl text-slate-900">Sign in</h2>
+          <p className="text-sm text-slate-500">
+            Patients, doctors, records and admin staff all sign in here.
+          </p>
+        </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5" noValidate>
           {formError && (
             <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
               {formError}
@@ -66,9 +72,14 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-slate-700">
-              Password
-            </label>
+            <div className="flex items-baseline justify-between">
+              <label htmlFor="password" className="block text-sm font-medium text-slate-700">
+                Password
+              </label>
+              <Link to="/forgot-password" className="text-sm text-blue-600 hover:underline">
+                Forgot password?
+              </Link>
+            </div>
             <input
               id="password"
               type="password"
@@ -78,15 +89,10 @@ export default function LoginPage() {
             />
           </div>
 
-          <div className="flex items-center justify-between">
-            <label htmlFor="rememberMe" className="flex items-center gap-2 text-sm text-slate-700">
-              <input id="rememberMe" type="checkbox" {...register('rememberMe')} />
-              Keep me signed in
-            </label>
-            <Link to="/forgot-password" className="text-sm text-blue-600 hover:underline">
-              Forgot password?
-            </Link>
-          </div>
+          <label htmlFor="rememberMe" className="flex items-center gap-2 text-sm text-slate-700">
+            <input id="rememberMe" type="checkbox" {...register('rememberMe')} />
+            Keep me signed in
+          </label>
 
           <button
             type="submit"
@@ -97,13 +103,13 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-slate-600">
-          Don&apos;t have an account?{' '}
+        <p className="text-center text-sm text-slate-600">
+          New patient?{' '}
           <Link to="/register" className="text-blue-600 hover:underline">
             Create an account
           </Link>
         </p>
       </div>
-    </div>
+    </AuthSplitLayout>
   );
 }

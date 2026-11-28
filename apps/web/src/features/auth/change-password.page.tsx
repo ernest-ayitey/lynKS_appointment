@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
+import AuthCard from '../../components/auth-card';
 import { ApiError } from '../../lib/api-client';
 import { GENERIC_ERROR_MESSAGE, applyApiError } from '../../lib/api-error-handling';
 import { useAuth } from '../../lib/auth-context';
@@ -52,78 +53,74 @@ export default function ChangePasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <div className="w-full max-w-sm rounded-lg bg-white p-8 shadow">
-        <h1 className="mb-6 text-center text-2xl font-semibold text-slate-900">Change password</h1>
+    <AuthCard title="Change password">
+      {user?.must_change_password && (
+        <div role="alert" className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          You must change your password before continuing.
+        </div>
+      )}
 
-        {user?.must_change_password && (
-          <div role="alert" className="mb-4 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            You must change your password before continuing.
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5" noValidate>
+        {formError && (
+          <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+            {formError}
           </div>
         )}
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
-          {formError && (
-            <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-              {formError}
-            </div>
+        <div>
+          <label htmlFor="currentPassword" className="block text-sm font-medium text-slate-700">
+            Current password
+          </label>
+          <input
+            id="currentPassword"
+            type="password"
+            autoComplete="current-password"
+            className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            {...register('currentPassword', { required: true })}
+          />
+          {errors.currentPassword && (
+            <p className="mt-1 text-sm text-red-600">{errors.currentPassword.message}</p>
           )}
+        </div>
 
-          <div>
-            <label htmlFor="currentPassword" className="block text-sm font-medium text-slate-700">
-              Current password
-            </label>
-            <input
-              id="currentPassword"
-              type="password"
-              autoComplete="current-password"
-              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              {...register('currentPassword', { required: true })}
-            />
-            {errors.currentPassword && (
-              <p className="mt-1 text-sm text-red-600">{errors.currentPassword.message}</p>
-            )}
-          </div>
+        <div>
+          <label htmlFor="password" className="block text-sm font-medium text-slate-700">
+            New password
+          </label>
+          <input
+            id="password"
+            type="password"
+            autoComplete="new-password"
+            className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            {...register('password', { required: true })}
+          />
+          {errors.password && <p className="mt-1 text-sm text-red-600">{errors.password.message}</p>}
+        </div>
 
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-slate-700">
-              New password
-            </label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="new-password"
-              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              {...register('password', { required: true })}
-            />
-            {errors.password && <p className="mt-1 text-sm text-red-600">{errors.password.message}</p>}
-          </div>
+        <div>
+          <label htmlFor="passwordConfirmation" className="block text-sm font-medium text-slate-700">
+            Confirm password
+          </label>
+          <input
+            id="passwordConfirmation"
+            type="password"
+            autoComplete="new-password"
+            className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            {...register('passwordConfirmation', { required: true })}
+          />
+          {errors.passwordConfirmation && (
+            <p className="mt-1 text-sm text-red-600">{errors.passwordConfirmation.message}</p>
+          )}
+        </div>
 
-          <div>
-            <label htmlFor="passwordConfirmation" className="block text-sm font-medium text-slate-700">
-              Confirm password
-            </label>
-            <input
-              id="passwordConfirmation"
-              type="password"
-              autoComplete="new-password"
-              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              {...register('passwordConfirmation', { required: true })}
-            />
-            {errors.passwordConfirmation && (
-              <p className="mt-1 text-sm text-red-600">{errors.passwordConfirmation.message}</p>
-            )}
-          </div>
-
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-          >
-            Change password
-          </button>
-        </form>
-      </div>
-    </div>
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+        >
+          Change password
+        </button>
+      </form>
+    </AuthCard>
   );
 }

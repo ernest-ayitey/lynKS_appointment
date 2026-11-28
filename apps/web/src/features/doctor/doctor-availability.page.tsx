@@ -252,17 +252,22 @@ export default function DoctorAvailabilityPage() {
   const days = Array.from({ length: daysInMonth(monthDate) }, (_, i) => i + 1);
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-8">
-      <div className="mx-auto max-w-4xl space-y-8">
-        <h1 className="text-2xl font-semibold text-slate-900">Doctor availability</h1>
+    <div className="mx-auto max-w-5xl space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold text-slate-900">My availability</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Click days on the calendar to open or close them for patient booking.
+        </p>
+      </div>
 
-        <section className="rounded-lg bg-white p-6 shadow">
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+        <section className="flex-1 rounded-lg border border-slate-300 bg-white p-6 lg:basis-2/3">
           <div className="mb-4 flex items-center justify-between">
             <button
               type="button"
               aria-label="Previous month"
               onClick={() => setMonthDate((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
-              className="rounded-md px-2 py-1 text-slate-600 hover:bg-slate-100"
+              className="rounded-md border border-slate-300 px-2 py-1 text-slate-600 hover:bg-slate-100"
             >
               ‹
             </button>
@@ -273,26 +278,39 @@ export default function DoctorAvailabilityPage() {
               type="button"
               aria-label="Next month"
               onClick={() => setMonthDate((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
-              className="rounded-md px-2 py-1 text-slate-600 hover:bg-slate-100"
+              className="rounded-md border border-slate-300 px-2 py-1 text-slate-600 hover:bg-slate-100"
             >
               ›
             </button>
           </div>
 
-          <div className="mb-4 flex flex-wrap gap-2">
-            {WEEKDAY_CHIPS.map((chip) => (
-              <button
-                key={chip.label}
-                type="button"
-                onClick={() => applyWeekday(chip.value)}
-                className="rounded-full border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100"
-              >
-                {chip.label}
-              </button>
-            ))}
+          <div className="mb-4">
+            <p className="mb-2 text-sm font-medium text-slate-700">Quick set: repeat every week on</p>
+            <div className="flex flex-wrap gap-2">
+              {WEEKDAY_CHIPS.map((chip) => (
+                <button
+                  key={chip.label}
+                  type="button"
+                  onClick={() => applyWeekday(chip.value)}
+                  className="rounded-full border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-100"
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="grid grid-cols-7 gap-1 text-center text-sm">
+          <div className="grid grid-cols-7 gap-1 text-center text-xs font-semibold text-slate-500">
+            <span>Mon</span>
+            <span>Tue</span>
+            <span>Wed</span>
+            <span>Thu</span>
+            <span>Fri</span>
+            <span>Sat</span>
+            <span>Sun</span>
+          </div>
+
+          <div className="mt-1 grid grid-cols-7 gap-1 text-center text-sm">
             {blanks.map((_, index) => (
               <div key={`blank-${index}`} />
             ))}
@@ -306,14 +324,27 @@ export default function DoctorAvailabilityPage() {
                   aria-label={dateIso}
                   aria-pressed={available}
                   onClick={() => toggleDay(dateIso)}
-                  className={`rounded-md py-2 ${
-                    available ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  className={`rounded-md border py-2 font-medium ${
+                    available
+                      ? 'border-blue-600 bg-blue-600 text-white'
+                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
                   }`}
                 >
                   {day}
                 </button>
               );
             })}
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-4 text-xs text-slate-500">
+            <span className="flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 rounded-sm bg-blue-600" aria-hidden="true" />
+              Available
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 rounded-sm border border-slate-300 bg-white" aria-hidden="true" />
+              Not available
+            </span>
           </div>
 
           {availabilityBanner && (
@@ -326,13 +357,13 @@ export default function DoctorAvailabilityPage() {
             type="button"
             onClick={handleSaveAvailability}
             disabled={savingAvailability}
-            className="mt-4 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+            className="mt-4 rounded-md border border-blue-600 bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
           >
             Save availability
           </button>
         </section>
 
-        <section className="rounded-lg bg-white p-6 shadow">
+        <section className="rounded-lg border border-slate-300 bg-white p-6 lg:basis-1/3">
           <h2 className="mb-4 text-lg font-medium text-slate-900">Session settings</h2>
 
           <form onSubmit={handleSubmit(onSubmitSettings)} className="space-y-4" noValidate>
@@ -370,36 +401,38 @@ export default function DoctorAvailabilityPage() {
               </div>
             </div>
 
-            <div>
-              <label htmlFor="slotLengthMinutes" className="block text-sm font-medium text-slate-700">
-                Slot length (minutes)
-              </label>
-              <input
-                id="slotLengthMinutes"
-                type="number"
-                min={1}
-                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                {...register('slotLengthMinutes', { required: true })}
-              />
-              {errors.slotLengthMinutes && (
-                <p className="mt-1 text-sm text-red-600">{errors.slotLengthMinutes.message}</p>
-              )}
-            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="slotLengthMinutes" className="block text-sm font-medium text-slate-700">
+                  Slot length (minutes)
+                </label>
+                <input
+                  id="slotLengthMinutes"
+                  type="number"
+                  min={1}
+                  className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  {...register('slotLengthMinutes', { required: true })}
+                />
+                {errors.slotLengthMinutes && (
+                  <p className="mt-1 text-sm text-red-600">{errors.slotLengthMinutes.message}</p>
+                )}
+              </div>
 
-            <div>
-              <label htmlFor="maxPatientsPerDay" className="block text-sm font-medium text-slate-700">
-                Max patients per day (optional)
-              </label>
-              <input
-                id="maxPatientsPerDay"
-                type="number"
-                min={1}
-                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                {...register('maxPatientsPerDay')}
-              />
-              {errors.maxPatientsPerDay && (
-                <p className="mt-1 text-sm text-red-600">{errors.maxPatientsPerDay.message}</p>
-              )}
+              <div>
+                <label htmlFor="maxPatientsPerDay" className="block text-sm font-medium text-slate-700">
+                  Max patients per day (optional)
+                </label>
+                <input
+                  id="maxPatientsPerDay"
+                  type="number"
+                  min={1}
+                  className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  {...register('maxPatientsPerDay')}
+                />
+                {errors.maxPatientsPerDay && (
+                  <p className="mt-1 text-sm text-red-600">{errors.maxPatientsPerDay.message}</p>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -433,7 +466,7 @@ export default function DoctorAvailabilityPage() {
             <button
               type="submit"
               disabled={savingSettings}
-              className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+              className="w-full rounded-md border border-blue-600 bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
             >
               Save session settings
             </button>

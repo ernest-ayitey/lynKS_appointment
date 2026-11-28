@@ -145,103 +145,107 @@ export default function RecordsQueuePage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-8">
-      <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
+      <div>
         <h1 className="text-2xl font-semibold text-slate-900">Approval queue</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Approving sends a confirmation email to the patient and the doctor.
+        </p>
+      </div>
 
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <div className="rounded-lg bg-white p-4 shadow">
-            <p className="text-sm text-slate-500">Pending</p>
-            <p data-testid="stat-pending" className="text-2xl font-semibold text-slate-900">
-              {stats.pending}
-            </p>
-          </div>
-          <div className="rounded-lg bg-white p-4 shadow">
-            <p className="text-sm text-slate-500">Approved today</p>
-            <p data-testid="stat-approved-today" className="text-2xl font-semibold text-slate-900">
-              {stats.approved_today}
-            </p>
-          </div>
-          <div className="rounded-lg bg-white p-4 shadow">
-            <p className="text-sm text-slate-500">Declined today</p>
-            <p data-testid="stat-declined-today" className="text-2xl font-semibold text-slate-900">
-              {stats.declined_today}
-            </p>
-          </div>
-          <div className="rounded-lg bg-white p-4 shadow">
-            <p className="text-sm text-slate-500">Oldest waiting</p>
-            <p data-testid="stat-oldest-waiting" className="text-2xl font-semibold text-slate-900">
-              {stats.oldest_waiting_at ? relativeTime(stats.oldest_waiting_at) : '—'}
-            </p>
-          </div>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="rounded-lg border border-slate-300 bg-white p-4">
+          <p className="text-sm text-slate-500">Pending</p>
+          <p data-testid="stat-pending" className="mt-1 text-2xl font-semibold text-slate-900">
+            {stats.pending}
+          </p>
+        </div>
+        <div className="rounded-lg border border-slate-300 bg-white p-4">
+          <p className="text-sm text-slate-500">Approved today</p>
+          <p data-testid="stat-approved-today" className="mt-1 text-2xl font-semibold text-slate-900">
+            {stats.approved_today}
+          </p>
+        </div>
+        <div className="rounded-lg border border-slate-300 bg-white p-4">
+          <p className="text-sm text-slate-500">Declined today</p>
+          <p data-testid="stat-declined-today" className="mt-1 text-2xl font-semibold text-slate-900">
+            {stats.declined_today}
+          </p>
+        </div>
+        <div className="rounded-lg border border-slate-300 bg-white p-4">
+          <p className="text-sm text-slate-500">Oldest waiting</p>
+          <p data-testid="stat-oldest-waiting" className="mt-1 text-2xl font-semibold text-slate-900">
+            {stats.oldest_waiting_at ? relativeTime(stats.oldest_waiting_at) : '—'}
+          </p>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-slate-300 bg-white">
+        <div role="tablist" aria-label="Request status" className="flex flex-wrap border-b border-slate-300 px-3">
+          {TABS.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`border-b-2 px-4 py-3 text-sm font-semibold ${
+                activeTab === tab.key ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-2">
-            {TABS.map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                aria-pressed={activeTab === tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                  activeTab === tab.key ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                {tab.label}
-              </button>
+        <div className="flex flex-wrap gap-2 p-4">
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search by patient or doctor name"
+            aria-label="Search"
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          />
+
+          <select
+            value={doctorId}
+            onChange={(event) => setDoctorId(event.target.value)}
+            aria-label="Doctor"
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          >
+            <option value="">All doctors</option>
+            {doctorOptions.map((doc) => (
+              <option key={doc.id} value={doc.id}>
+                Dr. {doc.first_name} {doc.last_name}
+              </option>
             ))}
-          </div>
+          </select>
 
-          <div className="flex flex-wrap gap-2">
-            <input
-              type="search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search by patient or doctor name"
-              aria-label="Search"
-              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
-            />
-
-            <select
-              value={doctorId}
-              onChange={(event) => setDoctorId(event.target.value)}
-              aria-label="Doctor"
-              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
-            >
-              <option value="">All doctors</option>
-              {doctorOptions.map((doc) => (
-                <option key={doc.id} value={doc.id}>
-                  Dr. {doc.first_name} {doc.last_name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={sort}
-              onChange={(event) => setSort(event.target.value as '' | 'oldest' | 'newest')}
-              aria-label="Sort"
-              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
-            >
-              <option value="">Sort</option>
-              <option value="oldest">Oldest first</option>
-              <option value="newest">Newest first</option>
-            </select>
-          </div>
+          <select
+            value={sort}
+            onChange={(event) => setSort(event.target.value as '' | 'oldest' | 'newest')}
+            aria-label="Sort"
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          >
+            <option value="">Sort</option>
+            <option value="oldest">Oldest first</option>
+            <option value="newest">Newest first</option>
+          </select>
         </div>
 
         {listBanner && (
-          <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div role="alert" className="mx-4 mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
             {listBanner}
           </div>
         )}
         {actionBanner && (
-          <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div role="alert" className="mx-4 mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
             {actionBanner}
           </div>
         )}
 
-        <div className="overflow-x-auto rounded-lg bg-white shadow">
+        <div className="overflow-x-auto px-4 pb-4">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead>
               <tr className="text-left text-slate-500">
@@ -338,4 +342,5 @@ export default function RecordsQueuePage() {
       </div>
     </div>
   );
+
 }
