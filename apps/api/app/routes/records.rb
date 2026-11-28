@@ -393,7 +393,8 @@ class RecordsRoutes < ApiRoutes
               "Time: #{appointment.time}\n" \
               "Visit type: #{appointment.visit_type}\n" \
               "Reason: #{appointment.reason}\n" \
-              "Approved by: #{current_user.first_name} #{current_user.last_name}"
+              "Approved by: #{current_user.first_name} #{current_user.last_name}",
+        appointment: appointment
       )
 
       Mailer.deliver(
