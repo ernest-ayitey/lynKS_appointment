@@ -60,12 +60,14 @@ export function listDoctorAppointments(
 }
 
 // `{ status, visit_notes? }` per appointments.rb's `PATCH /appointments/:id`
-// — `status` must be 'completed' or 'no_show' (PATCHABLE_STATUSES); the
-// backend only accepts this on an `approved` appointment.
+// — `status` must be 'arrived', 'completed', or 'no_show' (PATCHABLE_STATUSES).
+// The backend's precondition is target-status-aware: 'arrived' requires the
+// appointment currently be 'approved'; 'completed'/'no_show' accept either
+// 'approved' or 'arrived' as the current status.
 export function markAppointmentOutcome(
   authedFetch: AuthedFetch,
   id: number,
-  payload: { status: 'completed' | 'no_show'; visit_notes?: string },
+  payload: { status: 'arrived' | 'completed' | 'no_show'; visit_notes?: string },
 ): Promise<DoctorAppointment> {
   return authedFetch<DoctorAppointment>(`/appointments/${id}`, { method: 'PATCH', body: payload });
 }

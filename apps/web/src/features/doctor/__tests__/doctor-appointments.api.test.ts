@@ -71,4 +71,15 @@ describe('doctor-appointments.api', () => {
       body: { status: 'no_show' },
     });
   });
+
+  it('markAppointmentOutcome accepts status: "arrived" and PATCHes the same endpoint', async () => {
+    const authedFetch = vi.fn().mockResolvedValue({});
+
+    await markAppointmentOutcome(authedFetch, 7, { status: 'arrived' });
+
+    expect(authedFetch).toHaveBeenCalledWith('/appointments/7', {
+      method: 'PATCH',
+      body: { status: 'arrived' },
+    });
+  });
 });
