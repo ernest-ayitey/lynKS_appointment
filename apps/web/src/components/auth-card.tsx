@@ -12,7 +12,7 @@ export default function AuthCard({ title, subtitle, stepLabel, maxWidth = 'narro
   const maxWidthClass = maxWidth === 'wide' ? 'max-w-[720px]' : 'max-w-[420px]';
 
   return (
-    <div className="flex w-full flex-col items-center gap-6">
+    <div className="flex min-h-screen w-full flex-col items-center gap-6 bg-slate-50 px-6 py-10">
       {stepLabel ? (
         <span className="text-xs font-bold uppercase tracking-wide text-slate-500">{stepLabel}</span>
       ) : (

@@ -282,7 +282,7 @@ export default function DoctorAppointmentsPage() {
           </div>
 
           {selected && (
-            <aside className="w-full max-w-sm shrink-0 space-y-4 rounded-lg bg-white p-4 shadow sm:w-96">
+            <aside className="w-full max-w-sm shrink-0 space-y-4 rounded-lg border border-slate-300 bg-white p-4 sm:w-96">
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-slate-400">

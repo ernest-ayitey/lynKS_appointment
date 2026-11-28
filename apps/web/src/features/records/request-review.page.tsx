@@ -314,7 +314,7 @@ export default function RequestReviewPage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
-          <section className="rounded-lg bg-white p-6 shadow">
+          <section className="rounded-lg border border-slate-300 bg-white p-6">
             <h2 className="mb-4 text-lg font-medium text-slate-900">Requested appointment</h2>
             <dl className="grid grid-cols-2 gap-2 text-sm">
               <dt className="text-slate-500">Doctor</dt>
@@ -334,7 +334,7 @@ export default function RequestReviewPage() {
             </dl>
           </section>
 
-          <section className="rounded-lg bg-white p-6 shadow">
+          <section className="rounded-lg border border-slate-300 bg-white p-6">
             <h2 className="mb-4 text-lg font-medium text-slate-900">Patient</h2>
             <p className="font-medium text-slate-900">
               {requestDetail.patient.first_name} {requestDetail.patient.last_name}
@@ -354,7 +354,7 @@ export default function RequestReviewPage() {
             </dl>
           </section>
 
-          <section data-testid="doctor-day-grid" className="rounded-lg bg-white p-6 shadow">
+          <section data-testid="doctor-day-grid" className="rounded-lg border border-slate-300 bg-white p-6">
             <h2 className="mb-4 text-lg font-medium text-slate-900">
               Dr. {requestDetail.doctor.last_name}'s day — {relevantDate}
             </h2>
@@ -394,7 +394,7 @@ export default function RequestReviewPage() {
         </div>
 
         <div className="lg:sticky lg:top-8 lg:self-start">
-          <section className="rounded-lg bg-white p-6 shadow">
+          <section className="rounded-lg border border-slate-300 bg-white p-6">
             <h2 className="mb-4 text-lg font-medium text-slate-900">Decision</h2>
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
               <fieldset className="space-y-2">

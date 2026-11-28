@@ -203,7 +203,7 @@ export default function RecordsQueuePage() {
             type="search"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search patient, ref or doctor"
+            placeholder="Search by patient or doctor name"
             aria-label="Search"
             className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
           />
