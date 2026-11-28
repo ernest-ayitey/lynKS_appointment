@@ -343,4 +343,23 @@ describe('DoctorDashboardPage', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/something went wrong/i);
   });
+
+  // Reviewer finding: when the combined fetch fails, every piece of state
+  // it would have populated stays empty -- so without a `!listBanner`
+  // guard, the three empty-state messages below would render alongside
+  // the error banner and assert "No appointments scheduled today." /
+  // "No upcoming available days set." / "No recent emails." even though
+  // the real cause is an unknown fetch failure, not an actually-empty
+  // schedule/availability/inbox. This is clinically misleading, not just
+  // cosmetic, so all three must be suppressed whenever the banner is up.
+  it('suppresses all three empty-state messages when the fetch fails, showing only the error banner', async () => {
+    getDashboardStats.mockRejectedValueOnce(new ApiError('Something went wrong. Please try again.', 500, {}));
+
+    renderPage();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/something went wrong/i);
+    expect(screen.queryByText(/no appointments scheduled today/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no upcoming available days/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no recent emails/i)).not.toBeInTheDocument();
+  });
 });

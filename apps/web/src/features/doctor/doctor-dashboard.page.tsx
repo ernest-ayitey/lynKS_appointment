@@ -295,7 +295,7 @@ export default function DoctorDashboardPage() {
         <section className="min-w-0 flex-[2_1_400px] rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="mb-1 text-base font-semibold text-slate-900">Today&apos;s schedule</h2>
 
-          {scheduleRows.length === 0 && (
+          {scheduleRows.length === 0 && !listBanner && (
             <p className="py-4 text-sm text-slate-500">No appointments scheduled today.</p>
           )}
 
@@ -352,7 +352,7 @@ export default function DoctorDashboardPage() {
 
         <section className="min-w-0 flex-[1_1_260px] space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="text-base font-semibold text-slate-900">My next available days</h2>
-          {availableDays.length === 0 ? (
+          {availableDays.length === 0 && !listBanner ? (
             <p className="text-sm text-slate-500">No upcoming available days set.</p>
           ) : (
             <div className="flex flex-wrap gap-2">
@@ -370,7 +370,7 @@ export default function DoctorDashboardPage() {
           <p className="text-xs text-slate-500">Patients can only book on these days.</p>
 
           <h2 className="pt-2 text-base font-semibold text-slate-900">Recent emails</h2>
-          {emails.length === 0 ? (
+          {emails.length === 0 && !listBanner ? (
             <p className="text-sm text-slate-500">No recent emails.</p>
           ) : (
             <ul className="list-disc space-y-1 pl-4 text-sm text-slate-700">
