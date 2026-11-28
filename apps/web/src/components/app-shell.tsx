@@ -31,7 +31,7 @@ export const NAV_ITEMS: Record<'patient' | 'doctor' | 'records', NavItem[]> = {
     { key: 'patient-profile', label: 'Profile', href: null },
   ],
   doctor: [
-    { key: 'doctor-dashboard', label: 'Dashboard', href: null },
+    { key: 'doctor-dashboard', label: 'Dashboard', href: '/doctor/dashboard' },
     { key: 'doctor-availability', label: 'My availability', href: '/doctor/availability' },
     { key: 'doctor-appointments', label: 'Appointments', href: '/doctor/appointments' },
     { key: 'doctor-profile', label: 'Profile', href: null },

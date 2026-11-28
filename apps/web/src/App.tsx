@@ -11,6 +11,7 @@ import ResetPasswordPage from './features/auth/reset-password.page';
 import RoleLandingPage from './features/dashboard/role-landing.page';
 import DoctorAppointmentsPage from './features/doctor/doctor-appointments.page';
 import DoctorAvailabilityPage from './features/doctor/doctor-availability.page';
+import DoctorDashboardPage from './features/doctor/doctor-dashboard.page';
 import RecordsQueuePage from './features/records/records-queue.page';
 import RequestReviewPage from './features/records/request-review.page';
 import { AuthProvider } from './lib/auth-context';
@@ -54,6 +55,16 @@ export default function App() {
                   <ProtectedRoute allowedRoles={['doctor']}>
                     <AppShell activeNavKey="doctor-availability">
                       <DoctorAvailabilityPage />
+                    </AppShell>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/doctor/dashboard"
+                element={
+                  <ProtectedRoute allowedRoles={['doctor']}>
+                    <AppShell activeNavKey="doctor-dashboard">
+                      <DoctorDashboardPage />
                     </AppShell>
                   </ProtectedRoute>
                 }
