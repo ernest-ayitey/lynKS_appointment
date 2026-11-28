@@ -287,6 +287,50 @@ describe('DoctorAppointmentsPage', () => {
     await waitFor(() => expect(listDoctorAppointments).toHaveBeenCalledTimes(2));
   });
 
+  it('shows a Mark arrived button for an approved appointment, which calls markAppointmentOutcome with status arrived and refetches', async () => {
+    const row = doctorAppointment({ id: 42, status: 'approved' });
+    listDoctorAppointments.mockResolvedValueOnce({ appointments: [row], total: 1 });
+    listDoctorAppointments.mockResolvedValueOnce({ appointments: [doctorAppointment({ id: 42, status: 'arrived' })], total: 1 });
+    markAppointmentOutcome.mockResolvedValueOnce(doctorAppointment({ id: 42, status: 'arrived' }));
+
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Ama Boateng');
+    await user.click(screen.getByRole('button', { name: 'Review' }));
+
+    await user.click(screen.getByRole('button', { name: 'Mark arrived' }));
+
+    await waitFor(() =>
+      expect(markAppointmentOutcome).toHaveBeenCalledWith(authedFetch, 42, { status: 'arrived', visit_notes: '' }),
+    );
+    await waitFor(() => expect(listDoctorAppointments).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows Mark completed/No-show (not Mark arrived) for an arrived appointment', async () => {
+    const row = doctorAppointment({ id: 42, status: 'arrived' });
+    listDoctorAppointments.mockResolvedValueOnce({ appointments: [row], total: 1 });
+
+    renderPage();
+    await screen.findByText('Ama Boateng');
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Review' }));
+
+    expect(screen.getByRole('button', { name: 'Mark completed' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'No-show' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Mark arrived' })).not.toBeInTheDocument();
+  });
+
+  it('renders an amber Arrived badge for an arrived appointment\'s status', async () => {
+    const row = doctorAppointment({ id: 42, status: 'arrived' });
+    listDoctorAppointments.mockResolvedValueOnce({ appointments: [row], total: 1 });
+
+    renderPage();
+    await screen.findByText('Ama Boateng');
+
+    const badge = screen.getByTestId('appointment-status');
+    expect(badge).toHaveTextContent('Arrived');
+    expect(badge).toHaveClass('bg-amber-100', 'text-amber-800');
+  });
+
   it('does not show Mark completed/No-show actions for an already-completed appointment', async () => {
     const row = doctorAppointment({ id: 42, status: 'completed' });
     listDoctorAppointments.mockResolvedValueOnce({ appointments: [row], total: 1 });

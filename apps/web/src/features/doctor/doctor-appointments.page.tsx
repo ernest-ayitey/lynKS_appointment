@@ -20,6 +20,7 @@ const DATE_RANGE_OPTIONS: Array<{ key: DateRangePreset; label: string }> = [
 
 const STATUS_BADGE_CLASSES: Record<string, string> = {
   approved: 'bg-green-100 text-green-800',
+  arrived: 'bg-amber-100 text-amber-800',
   completed: 'bg-blue-100 text-blue-800',
   no_show: 'bg-red-100 text-red-800',
 };
@@ -132,7 +133,7 @@ export default function DoctorAppointmentsPage() {
     setVisitNotes(appointment.visit_notes ?? '');
   }
 
-  async function handleMarkOutcome(status: 'completed' | 'no_show') {
+  async function handleMarkOutcome(status: 'arrived' | 'completed' | 'no_show') {
     if (!selected) return;
     setActionBanner(null);
     setActingId(selected.id);
@@ -349,14 +350,25 @@ export default function DoctorAppointmentsPage() {
                 />
               </div>
 
-              {/* Only an `approved` appointment can be marked completed/no-show
-                  (the backend's PATCH /appointments/:id rejects anything else
-                  with a 422) — hiding these for an already-decided row matches
-                  RecordsQueuePage's/MyAppointmentsPage's own convention of
-                  gating actions on status rather than letting the user hit a
-                  guaranteed error. */}
-              {selected.status === 'approved' && (
+              {/* Only an `approved` appointment can be marked arrived, and
+                  only an `approved` or `arrived` appointment can be marked
+                  completed/no-show (the backend's PATCH /appointments/:id
+                  rejects anything else with a 422) — hiding these for an
+                  already-decided row matches RecordsQueuePage's/
+                  MyAppointmentsPage's own convention of gating actions on
+                  status rather than letting the user hit a guaranteed error. */}
+              {(selected.status === 'approved' || selected.status === 'arrived') && (
                 <div className="flex flex-wrap gap-2">
+                  {selected.status === 'approved' && (
+                    <button
+                      type="button"
+                      disabled={actingId === selected.id}
+                      onClick={() => handleMarkOutcome('arrived')}
+                      className="rounded-md border border-amber-300 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-60"
+                    >
+                      Mark arrived
+                    </button>
+                  )}
                   <button
                     type="button"
                     disabled={actingId === selected.id}
