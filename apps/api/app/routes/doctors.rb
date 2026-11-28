@@ -257,13 +257,19 @@ class DoctorRoutes < ApiRoutes
     end
     halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
 
-    # A day holding an `approved` appointment can't be closed — the patient
-    # was already told yes. Checked before the transaction opens, same as
-    # the format/range checks above, so this rejection is all-or-nothing
-    # with the rest of the request rather than a partial write. A merely
-    # `pending` appointment doesn't lock the day: nothing has been promised
-    # to that patient yet.
-    if unset_dates.any? { |d| !Appointment.where(doctor_id: current_user.id, date: parsed_by_date[d], status: 'approved').empty? }
+    # A day holding an `approved` OR `arrived` appointment can't be closed —
+    # the patient was already told yes, and an `arrived` patient is already
+    # physically at the clinic, so that case is if anything more locked-in
+    # than merely `approved`. Deliberately `%w[approved arrived]` rather
+    # than reusing `Appointment::OCCUPYING_STATUSES` (`%w[pending approved
+    # arrived]`) directly: `OCCUPYING_STATUSES` also includes `pending`,
+    # but a merely `pending` appointment doesn't lock the day here — nothing
+    # has been promised to that patient yet — and the test immediately
+    # below this one locks in that exact behavior. Checked before the
+    # transaction opens, same as the format/range checks above, so this
+    # rejection is all-or-nothing with the rest of the request rather than
+    # a partial write.
+    if unset_dates.any? { |d| !Appointment.where(doctor_id: current_user.id, date: parsed_by_date[d], status: %w[approved arrived]).empty? }
       errors[:dates] = DATE_HAS_APPROVED_APPOINTMENT_MESSAGE
     end
     halt_json_error 422, VALIDATION_FAILED_MESSAGE, errors unless errors.empty?
@@ -301,10 +307,11 @@ class DoctorRoutes < ApiRoutes
   # `GET /doctors/:id/availability`: a date missing from that response has no
   # slots here either.
   #
-  # Also excludes any slot already held by a `pending` or `approved`
-  # appointment (`Appointment::OCCUPYING_STATUSES`) — a slot a patient can't
-  # actually book must not be offered as if it were open. A `declined` or
-  # `cancelled` appointment never occupies its slot, so it's left untouched.
+  # Also excludes any slot already held by a `pending`, `approved`, or
+  # `arrived` appointment (`Appointment::OCCUPYING_STATUSES`) — a slot a
+  # patient can't actually book must not be offered as if it were open. A
+  # `declined` or `cancelled` appointment never occupies its slot, so it's
+  # left untouched.
   get '/doctors/:id/slots' do
     doctor = active_doctor(params['id'])
     halt_json_error 404, NOT_FOUND_MESSAGE unless doctor

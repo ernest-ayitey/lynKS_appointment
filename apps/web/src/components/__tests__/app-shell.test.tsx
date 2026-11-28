@@ -22,7 +22,7 @@ function renderShell(props: { activeNavKey?: Parameters<typeof AppShell>[0]['act
 }
 
 describe('AppShell', () => {
-  it('renders the Dashboard/My availability/Appointments/Profile nav for a doctor, with Dashboard and Profile inert', () => {
+  it('renders the Dashboard/My availability/Appointments/Profile nav for a doctor, with Profile inert', () => {
     useAuth.mockReturnValue({
       user: { role: 'doctor', first_name: 'Kwame', last_name: 'Asante' },
       logout,
@@ -30,14 +30,14 @@ describe('AppShell', () => {
 
     renderShell();
 
+    const dashboardLink = screen.getByRole('link', { name: /^dashboard$/i });
+    expect(dashboardLink).toHaveAttribute('href', '/doctor/dashboard');
+
     const availabilityLink = screen.getByRole('link', { name: /my availability/i });
     expect(availabilityLink).toHaveAttribute('href', '/doctor/availability');
 
     const appointmentsLink = screen.getByRole('link', { name: /appointments/i });
     expect(appointmentsLink).toHaveAttribute('href', '/doctor/appointments');
-
-    expect(screen.queryByRole('link', { name: /^dashboard$/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/^dashboard$/i)).toBeInTheDocument();
 
     expect(screen.queryByRole('link', { name: /^profile$/i })).not.toBeInTheDocument();
     expect(screen.getByText(/^profile$/i)).toBeInTheDocument();
@@ -89,14 +89,14 @@ describe('AppShell', () => {
 
     renderShell();
 
-    const dashboardLabel = screen.getByText(/^dashboard$/i);
-    const container = dashboardLabel.closest('[aria-disabled]');
+    const profileLabel = screen.getByText(/^profile$/i);
+    const container = profileLabel.closest('[aria-disabled]');
     expect(container).not.toBeNull();
     expect(container).toHaveAttribute('aria-disabled', 'true');
     expect(container?.tagName).not.toBe('A');
 
     const linkNames = screen.getAllByRole('link').map((link) => link.textContent);
-    expect(linkNames.join(' ')).not.toMatch(/dashboard/i);
+    expect(linkNames.join(' ')).not.toMatch(/profile/i);
   });
 
   it('renders an empty sidebar for a role with no NAV_ITEMS entry (e.g. admin), not a crash', () => {

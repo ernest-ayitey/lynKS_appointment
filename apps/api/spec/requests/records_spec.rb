@@ -189,6 +189,23 @@ RSpec.describe 'GET /api/v1/records/queue' do
       expect(deliveries.map { |d| d[:to] }).to contain_exactly(patient.email, doctor.email)
     end
 
+    # Task 3: approve sends two emails (doctor + patient), but only the
+    # doctor-addressed one gets attributed to the appointment via
+    # `AppointmentEmail` — Task 4's doctor dashboard only ever needs to show
+    # the doctor their own copy, not the patient's.
+    it 'logs the doctor-addressed approval email but not the patient-addressed one' do
+      target = create_appointment(status: 'pending')
+
+      post_approve(records_token, target.id)
+      expect(last_response.status).to eq(200)
+
+      expect(AppointmentEmail.count).to eq(1)
+      logged = AppointmentEmail.first
+      expect(logged.appointment_id).to eq(target.id)
+      expect(logged.recipient_email).to eq(doctor.email)
+      expect(logged.recipient_email).not_to eq(patient.email)
+    end
+
     it 'stores internal_note when given' do
       target = create_appointment(status: 'pending')
       post_approve(records_token, target.id, internal_note: 'Checked insurance')
@@ -370,6 +387,18 @@ RSpec.describe 'GET /api/v1/records/queue' do
 
       expect(deliveries.size).to eq(1)
       expect(deliveries.first[:to]).to eq(patient.email)
+    end
+
+    # Task 3: decline's one email is patient-addressed, with no
+    # `appointment:` passed to `Mailer.deliver` for it (see records.rb's
+    # `deliver_declined_email`) — nothing should be logged.
+    it 'does not log anything on decline' do
+      target = create_appointment(status: 'pending')
+
+      post_decline(records_token, target.id, decline_reason_code: 'slot_taken')
+      expect(last_response.status).to eq(200)
+
+      expect(AppointmentEmail.count).to eq(0)
     end
 
     it "includes the decline_reason_code's mapped label in the patient email, with the message appended when given" do

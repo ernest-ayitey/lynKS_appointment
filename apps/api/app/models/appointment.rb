@@ -5,15 +5,23 @@ class Appointment < Sequel::Model(:appointments)
   many_to_one :patient, class: :User, key: :patient_id
   many_to_one :doctor, class: :User, key: :doctor_id
 
-  STATUSES = %w[pending approved declined cancelled completed no_show].freeze
+  STATUSES = %w[pending approved arrived declined cancelled completed no_show].freeze
   VISIT_TYPES = %w[new_consultation follow_up review_results].freeze
   DECLINE_REASON_CODES = %w[doctor_unavailable slot_taken needs_referral other].freeze
 
-  # Statuses that hold a slot — a pending request or an approved booking
-  # both occupy the doctor's (date, time) slot and must be considered by
-  # double-booking checks and availability math. Declined/cancelled/
-  # completed appointments do not.
-  OCCUPYING_STATUSES = %w[pending approved].freeze
+  # Statuses that hold a slot — a pending request, an approved booking, or
+  # a patient who has arrived all occupy the doctor's (date, time) slot and
+  # must be considered by double-booking checks and availability math.
+  # Declined/cancelled/completed appointments do not.
+  OCCUPYING_STATUSES = %w[pending approved arrived].freeze
+
+  # Statuses from which a patient may still cancel their own appointment.
+  # Distinct from OCCUPYING_STATUSES above: that one answers "does this
+  # block the slot?" (now including `arrived`), while this one answers
+  # "can the patient call POST /appointments/:id/cancel from here?" — an
+  # arrived patient is already at the clinic, so cancelling no longer makes
+  # sense even though the appointment still occupies its slot.
+  CANCELLABLE_STATUSES = %w[pending approved].freeze
 
   def validate
     self.status ||= 'pending' if new?

@@ -421,6 +421,15 @@ RSpec.describe 'GET /api/v1/doctors/:id/slots' do
       expect(slots.length).to eq(23)
     end
 
+    it 'excludes a slot held by an arrived appointment from the free-slots list, same as an approved one' do
+      create_appointment(status: 'arrived', time: '09:40')
+
+      get_slots(TokenService.issue_access_token(patient), doctor.id, date: available_date)
+      slots = JSON.parse(last_response.body)['slots']
+      expect(slots).not_to include('09:40')
+      expect(slots.length).to eq(23)
+    end
+
     %w[declined cancelled].each do |status|
       it "still includes the slot when the only appointment there is #{status}" do
         create_appointment(status: status, time: '10:00')

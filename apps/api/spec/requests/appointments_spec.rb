@@ -606,6 +606,16 @@ RSpec.describe 'GET /api/v1/appointments and GET /api/v1/appointments/:id' do
       end
     end
 
+    it "404/422s a cancel attempt on an arrived appointment the same way an already-completed one 422s" do
+      appointment = create_appointment(patient: patient, status: 'arrived')
+
+      cancel_appointment(patient_token, appointment.id)
+
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['error']).to eq('This appointment can no longer be cancelled')
+      expect(appointment.refresh.status).to eq('arrived')
+    end
+
     it "404s for another patient's appointment" do
       appointment = create_appointment(patient: other_patient)
 
@@ -784,6 +794,16 @@ RSpec.describe 'GET /api/v1/doctor/appointments and PATCH /api/v1/appointments/:
         expect(last_response.status).to eq(403)
       end
     end
+
+    it 'includes an arrived appointment in the list' do
+      arrived = create_appointment(status: 'arrived', date: Date.today + 5, time: '09:00')
+
+      get_doctor_appointments(doctor_token)
+
+      expect(last_response.status).to eq(200)
+      body = JSON.parse(last_response.body)
+      expect(body['appointments'].map { |a| a['id'] }).to include(arrived.id)
+    end
   end
 
   describe 'PATCH /appointments/:id (doctor)' do
@@ -848,6 +868,62 @@ RSpec.describe 'GET /api/v1/doctor/appointments and PATCH /api/v1/appointments/:
       end
     end
 
+    it 'marks an approved appointment arrived' do
+      appointment = create_appointment(status: 'approved')
+
+      patch_appointment(doctor_token, appointment.id, status: 'arrived')
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['status']).to eq('arrived')
+      expect(appointment.refresh.status).to eq('arrived')
+    end
+
+    it 'marks an arrived appointment completed' do
+      appointment = create_appointment(status: 'approved')
+      patch_appointment(doctor_token, appointment.id, status: 'arrived')
+      expect(last_response.status).to eq(200)
+
+      patch_appointment(doctor_token, appointment.id, status: 'completed')
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['status']).to eq('completed')
+      expect(appointment.refresh.status).to eq('completed')
+    end
+
+    it 'marks an arrived appointment no_show' do
+      appointment = create_appointment(status: 'approved')
+      patch_appointment(doctor_token, appointment.id, status: 'arrived')
+      expect(last_response.status).to eq(200)
+
+      patch_appointment(doctor_token, appointment.id, status: 'no_show')
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['status']).to eq('no_show')
+      expect(appointment.refresh.status).to eq('no_show')
+    end
+
+    it 'rejects marking an already-arrived appointment arrived again' do
+      appointment = create_appointment(status: 'approved')
+      patch_appointment(doctor_token, appointment.id, status: 'arrived')
+      expect(last_response.status).to eq(200)
+
+      patch_appointment(doctor_token, appointment.id, status: 'arrived')
+
+      expect(last_response.status).to eq(422)
+      expect(appointment.refresh.status).to eq('arrived')
+    end
+
+    %w[pending declined cancelled completed no_show].each do |non_approved_status|
+      it "rejects marking a #{non_approved_status} appointment arrived" do
+        appointment = create_appointment(status: non_approved_status)
+
+        patch_appointment(doctor_token, appointment.id, status: 'arrived')
+
+        expect(last_response.status).to eq(422)
+        expect(appointment.refresh.status).to eq(non_approved_status)
+      end
+    end
+
     it "404s for another doctor's appointment (ownership-scoped, same as a nonexistent id)" do
       appointment = create_appointment(doctor: other_doctor, status: 'approved')
 
@@ -866,6 +942,210 @@ RSpec.describe 'GET /api/v1/doctor/appointments and PATCH /api/v1/appointments/:
         appointment = create_appointment(status: 'approved')
         token = role == 'patient' ? patient_token : records_token
         patch_appointment(token, appointment.id, status: 'completed')
+        expect(last_response.status).to eq(403)
+      end
+    end
+  end
+end
+
+RSpec.describe 'GET /api/v1/doctor/dashboard/stats and GET /api/v1/doctor/dashboard/emails' do
+  let!(:patient) do
+    User.create(role: 'patient', username: 'ernesta', email: 'e@x.com',
+      first_name: 'Ann', last_name: 'Zebra', password: 'Sup3r!word')
+  end
+
+  let!(:other_patient) do
+    User.create(role: 'patient', username: 'otherpat', email: 'other@x.com',
+      first_name: 'Bob', last_name: 'Young', password: 'Sup3r!word')
+  end
+
+  let!(:department) { Department.create(name: 'Cardiology') }
+
+  let!(:doctor) do
+    User.create(role: 'doctor', username: 'docA', email: 'doca@x.com',
+      first_name: 'Dana', last_name: 'Who', password: 'Sup3r!word')
+  end
+
+  let!(:doctor_profile) do
+    DoctorProfile.create(user: doctor, department: department, specialty_title: 'Cardiologist')
+  end
+
+  let!(:other_doctor) do
+    User.create(role: 'doctor', username: 'docB', email: 'docb@x.com',
+      first_name: 'Sam', last_name: 'Smith', password: 'Sup3r!word')
+  end
+
+  let!(:records_user) do
+    User.create(role: 'records', username: 'recA', email: 'reca@x.com',
+      first_name: 'Rec', last_name: 'User', password: 'Sup3r!word')
+  end
+
+  def doctor_token
+    TokenService.issue_access_token(doctor)
+  end
+
+  def patient_token
+    TokenService.issue_access_token(patient)
+  end
+
+  def records_token
+    TokenService.issue_access_token(records_user)
+  end
+
+  def get_stats(token)
+    get '/api/v1/doctor/dashboard/stats', {}, { 'HTTP_AUTHORIZATION' => "Bearer #{token}" }
+  end
+
+  def get_emails(token)
+    get '/api/v1/doctor/dashboard/emails', {}, { 'HTTP_AUTHORIZATION' => "Bearer #{token}" }
+  end
+
+  # Mirrors the earlier describe blocks' `create_appointment` helper.
+  def create_appointment(patient: self.patient, doctor: self.doctor, department: self.department,
+                          date: Date.today, time: '09:00', status: 'pending')
+    Appointment.create(
+      patient_id: patient.id, doctor_id: doctor.id, department_id: department.id,
+      date: date, time: time, duration_minutes: 20, visit_type: 'new_consultation',
+      reason: 'Routine check-up', status: status, submitted_at: Time.now
+    )
+  end
+
+  describe 'GET /doctor/dashboard/stats' do
+    it 'returns distinct-patient counts for today and this week, a pending count, and an availability-day count' do
+      today = Date.today
+      # Monday-Sunday week containing `today`, the same boundary this route
+      # uses (reusing the frontend's existing `startOfWeek`/`endOfWeek`
+      # convention) — computed here so the fixtures below can pin exactly
+      # one appointment on each boundary day and one day just outside each
+      # boundary, regardless of what weekday the suite happens to run on.
+      week_start = today - (today.cwday - 1)
+      week_end = week_start + 6
+
+      create_appointment(patient: patient, date: today, time: '09:00', status: 'approved')
+      create_appointment(patient: other_patient, date: today, time: '10:00', status: 'approved')
+      create_appointment(patient: patient, date: week_start, time: '08:00', status: 'approved')
+      create_appointment(patient: other_patient, date: week_end, time: '08:00', status: 'approved')
+      # Just outside the week on either side: must not be counted in this_week.
+      create_appointment(patient: patient, date: week_start - 1, time: '09:00', status: 'approved')
+      create_appointment(patient: other_patient, date: week_end + 1, time: '09:00', status: 'approved')
+
+      # Dated well outside today/this week so they can't leak into those
+      # counts; `pending` has no date filter per this route's contract.
+      create_appointment(patient: patient, date: today + 20, time: '09:00', status: 'pending')
+      create_appointment(patient: other_patient, date: today + 21, time: '09:00', status: 'pending')
+
+      DoctorAvailabilityDay.create(user_id: doctor.id, date: Date.new(today.year, today.month, 1))
+      DoctorAvailabilityDay.create(user_id: doctor.id, date: Date.new(today.year, today.month, -1))
+
+      get_stats(doctor_token)
+
+      expect(last_response.status).to eq(200)
+      body = JSON.parse(last_response.body)
+      expect(body['patients_today']).to eq(2)
+      expect(body['this_week']).to eq(2)
+      expect(body['pending']).to eq(2)
+      expect(body['available_days_this_month']).to eq(2)
+    end
+
+    it 'counts a patient with two appointments the same day once, not twice' do
+      today = Date.today
+      create_appointment(patient: patient, date: today, time: '09:00', status: 'approved')
+      create_appointment(patient: patient, date: today, time: '10:00', status: 'approved')
+
+      get_stats(doctor_token)
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['patients_today']).to eq(1)
+    end
+
+    # Reviewer finding: `patients_today`/`this_week` must share
+    # `GET /doctor/appointments`' own worklist-status filter
+    # (`DOCTOR_WORKLIST_STATUSES`) — a `declined` or `cancelled` appointment
+    # never occupies the doctor's time, and a `pending` one is already
+    # reported separately by the `pending` stat, so none of the three
+    # should also inflate `patients_today`.
+    it 'does not count a declined appointment dated today toward patients_today' do
+      today = Date.today
+      create_appointment(patient: patient, date: today, time: '09:00', status: 'declined')
+
+      get_stats(doctor_token)
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['patients_today']).to eq(0)
+    end
+
+    it 'does not count a cancelled appointment dated today toward patients_today' do
+      today = Date.today
+      create_appointment(patient: patient, date: today, time: '09:00', status: 'cancelled')
+
+      get_stats(doctor_token)
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['patients_today']).to eq(0)
+    end
+
+    it 'does not count a pending appointment dated today toward patients_today (it is reported separately by the pending stat)' do
+      today = Date.today
+      create_appointment(patient: patient, date: today, time: '09:00', status: 'pending')
+
+      get_stats(doctor_token)
+
+      expect(last_response.status).to eq(200)
+      body = JSON.parse(last_response.body)
+      expect(body['patients_today']).to eq(0)
+      expect(body['pending']).to eq(1)
+    end
+
+    %w[patient records].each do |role|
+      it "rejects a #{role} role with 403" do
+        token = role == 'patient' ? patient_token : records_token
+        get_stats(token)
+        expect(last_response.status).to eq(403)
+      end
+    end
+  end
+
+  describe 'GET /doctor/dashboard/emails' do
+    it "returns the doctor's own 5 most recent appointment-related emails, newest first, capped at 5" do
+      appointment = create_appointment(patient: patient, status: 'approved')
+      other_appointment = create_appointment(doctor: other_doctor, patient: other_patient, status: 'approved')
+
+      # Six emails logged for this doctor's appointment, newest (i=0) to
+      # oldest (i=5), one minute apart so ordering is unambiguous.
+      6.times do |i|
+        AppointmentEmail.create(appointment_id: appointment.id, recipient_email: "p#{i}@x.com",
+                                 subject: "Subject #{i}", sent_at: Time.now - (i * 60))
+      end
+      # Belongs to a different doctor's appointment: must never appear.
+      AppointmentEmail.create(appointment_id: other_appointment.id, recipient_email: 'other@x.com',
+                               subject: 'Other doctor email', sent_at: Time.now)
+
+      get_emails(doctor_token)
+
+      expect(last_response.status).to eq(200)
+      body = JSON.parse(last_response.body)['emails']
+      expect(body.size).to eq(5)
+      # Newest-first and capped at 5: Subject 5 (oldest) is dropped.
+      expect(body.map { |e| e['subject'] }).to eq(['Subject 0', 'Subject 1', 'Subject 2', 'Subject 3', 'Subject 4'])
+      expect(body.first).to include(
+        'recipient_email' => 'p0@x.com',
+        'subject' => 'Subject 0',
+        'ref' => format('REQ-%05d', appointment.id)
+      )
+      expect(body.first['sent_at']).not_to be_nil
+    end
+
+    it 'returns an empty list when there are none' do
+      get_emails(doctor_token)
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['emails']).to eq([])
+    end
+
+    %w[patient records].each do |role|
+      it "rejects a #{role} role with 403" do
+        token = role == 'patient' ? patient_token : records_token
+        get_emails(token)
         expect(last_response.status).to eq(403)
       end
     end

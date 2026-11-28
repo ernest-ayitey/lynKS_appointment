@@ -14,7 +14,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'declined-cancelled', label: 'Declined/cancelled' },
 ];
 
-// Mirrors Appointment::OCCUPYING_STATUSES in apps/api/app/models/appointment.rb
+// Mirrors Appointment::CANCELLABLE_STATUSES in apps/api/app/models/appointment.rb
 // — the two non-terminal statuses POST /appointments/:id/cancel accepts.
 // Duplicated as plain strings rather than imported, since this is
 // TypeScript and that constant lives in the Ruby backend.
