@@ -21,7 +21,7 @@ class AppointmentRoutes < ApiRoutes
   REASON_REQUIRED_MESSAGE = 'Reason is required'
   NOT_FOUND_MESSAGE = 'Not found'
   ALREADY_FINAL_MESSAGE = 'This appointment can no longer be cancelled'
-  PATCHABLE_STATUSES = %w[completed no_show].freeze
+  PATCHABLE_STATUSES = %w[arrived completed no_show].freeze
   VISIT_NOTES_TOO_LONG_MESSAGE = 'Visit notes must be 255 characters or fewer'
 
   ISO_DATE = /\A\d{4}-\d{2}-\d{2}\z/
@@ -226,14 +226,15 @@ class AppointmentRoutes < ApiRoutes
 
   # The doctor's own appointments, restricted to the statuses relevant to a
   # doctor's worklist of visits they still need to close out or already
-  # have: `approved` (booked, upcoming or today), `completed`, and
-  # `no_show`. `pending`/`declined`/`cancelled` never occupy a doctor's time
-  # and are deliberately excluded — this is not the same list as a patient's
+  # have: `approved` (booked, upcoming or today), `arrived` (checked in,
+  # awaiting the visit), `completed`, and `no_show`.
+  # `pending`/`declined`/`cancelled` never occupy a doctor's time and are
+  # deliberately excluded — this is not the same list as a patient's
   # `GET /appointments`, which shows every status. No pagination, same
   # `total`-is-just-the-filtered-count contract as `GET /appointments`
   # above.
   get '/doctor/appointments' do
-    dataset = Appointment.where(doctor_id: current_user.id, status: %w[approved completed no_show])
+    dataset = Appointment.where(doctor_id: current_user.id, status: %w[approved arrived completed no_show])
     dataset = filter_by_patient_name(dataset, params['search'])
     dataset = filter_by_date_range(dataset, params['from'], params['to'])
 
@@ -268,8 +269,17 @@ class AppointmentRoutes < ApiRoutes
     unless new_status.is_a?(String) && PATCHABLE_STATUSES.include?(new_status)
       halt_json_error 422, VALIDATION_FAILED_MESSAGE, status: "Status must be one of: #{PATCHABLE_STATUSES.join(', ')}"
     end
-    unless appointment.status == 'approved'
-      halt_json_error 422, VALIDATION_FAILED_MESSAGE, status: 'Only an approved appointment can be marked completed or no-show'
+    # Target-status-aware precondition, not one uniform check: marking an
+    # appointment `arrived` requires it currently be `approved` (the
+    # check-in step happens once, on arrival); marking it `completed` or
+    # `no_show` accepts `approved` OR `arrived` as the current status, so
+    # the doctor can close out a visit either straight from `approved`
+    # (the original, still-supported path) or after having marked the
+    # patient `arrived` first (this task's new path).
+    required_current_statuses = new_status == 'arrived' ? %w[approved] : %w[approved arrived]
+    unless required_current_statuses.include?(appointment.status)
+      halt_json_error 422, VALIDATION_FAILED_MESSAGE,
+                       status: "Only an #{required_current_statuses.join(' or ')} appointment can be marked #{new_status}"
     end
 
     # `Appointment#validate`'s `validates_max_length 255, :visit_notes` would

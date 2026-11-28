@@ -301,10 +301,11 @@ class DoctorRoutes < ApiRoutes
   # `GET /doctors/:id/availability`: a date missing from that response has no
   # slots here either.
   #
-  # Also excludes any slot already held by a `pending` or `approved`
-  # appointment (`Appointment::OCCUPYING_STATUSES`) — a slot a patient can't
-  # actually book must not be offered as if it were open. A `declined` or
-  # `cancelled` appointment never occupies its slot, so it's left untouched.
+  # Also excludes any slot already held by a `pending`, `approved`, or
+  # `arrived` appointment (`Appointment::OCCUPYING_STATUSES`) — a slot a
+  # patient can't actually book must not be offered as if it were open. A
+  # `declined` or `cancelled` appointment never occupies its slot, so it's
+  # left untouched.
   get '/doctors/:id/slots' do
     doctor = active_doctor(params['id'])
     halt_json_error 404, NOT_FOUND_MESSAGE unless doctor

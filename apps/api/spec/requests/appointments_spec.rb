@@ -794,6 +794,16 @@ RSpec.describe 'GET /api/v1/doctor/appointments and PATCH /api/v1/appointments/:
         expect(last_response.status).to eq(403)
       end
     end
+
+    it 'includes an arrived appointment in the list' do
+      arrived = create_appointment(status: 'arrived', date: Date.today + 5, time: '09:00')
+
+      get_doctor_appointments(doctor_token)
+
+      expect(last_response.status).to eq(200)
+      body = JSON.parse(last_response.body)
+      expect(body['appointments'].map { |a| a['id'] }).to include(arrived.id)
+    end
   end
 
   describe 'PATCH /appointments/:id (doctor)' do
@@ -852,6 +862,62 @@ RSpec.describe 'GET /api/v1/doctor/appointments and PATCH /api/v1/appointments/:
         appointment = create_appointment(status: non_approved_status)
 
         patch_appointment(doctor_token, appointment.id, status: 'completed')
+
+        expect(last_response.status).to eq(422)
+        expect(appointment.refresh.status).to eq(non_approved_status)
+      end
+    end
+
+    it 'marks an approved appointment arrived' do
+      appointment = create_appointment(status: 'approved')
+
+      patch_appointment(doctor_token, appointment.id, status: 'arrived')
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['status']).to eq('arrived')
+      expect(appointment.refresh.status).to eq('arrived')
+    end
+
+    it 'marks an arrived appointment completed' do
+      appointment = create_appointment(status: 'approved')
+      patch_appointment(doctor_token, appointment.id, status: 'arrived')
+      expect(last_response.status).to eq(200)
+
+      patch_appointment(doctor_token, appointment.id, status: 'completed')
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['status']).to eq('completed')
+      expect(appointment.refresh.status).to eq('completed')
+    end
+
+    it 'marks an arrived appointment no_show' do
+      appointment = create_appointment(status: 'approved')
+      patch_appointment(doctor_token, appointment.id, status: 'arrived')
+      expect(last_response.status).to eq(200)
+
+      patch_appointment(doctor_token, appointment.id, status: 'no_show')
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['status']).to eq('no_show')
+      expect(appointment.refresh.status).to eq('no_show')
+    end
+
+    it 'rejects marking an already-arrived appointment arrived again' do
+      appointment = create_appointment(status: 'approved')
+      patch_appointment(doctor_token, appointment.id, status: 'arrived')
+      expect(last_response.status).to eq(200)
+
+      patch_appointment(doctor_token, appointment.id, status: 'arrived')
+
+      expect(last_response.status).to eq(422)
+      expect(appointment.refresh.status).to eq('arrived')
+    end
+
+    %w[pending declined cancelled completed no_show].each do |non_approved_status|
+      it "rejects marking a #{non_approved_status} appointment arrived" do
+        appointment = create_appointment(status: non_approved_status)
+
+        patch_appointment(doctor_token, appointment.id, status: 'arrived')
 
         expect(last_response.status).to eq(422)
         expect(appointment.refresh.status).to eq(non_approved_status)
