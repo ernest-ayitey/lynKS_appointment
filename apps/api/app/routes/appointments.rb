@@ -209,14 +209,16 @@ class AppointmentRoutes < ApiRoutes
 
   # Same ownership-scoped lookup (and therefore the same 404 for "doesn't
   # exist" and "belongs to someone else") as `GET /appointments/:id` above.
-  # Cancelling is allowed from either occupying status — `pending` or
-  # `approved` — per this plan's sequencing decision to not add a pre-visit
-  # cutoff yet; it's refused with 422 from any terminal status.
+  # Cancelling is allowed from either `Appointment::CANCELLABLE_STATUSES`
+  # status — `pending` or `approved` — per this plan's sequencing decision
+  # to not add a pre-visit cutoff yet; it's refused with 422 from any other
+  # status, terminal (`declined`/`cancelled`/`completed`/`no_show`) or not
+  # (`arrived` — already at the clinic, so cancelling no longer applies).
   post '/appointments/:id/cancel' do
     appointment = Appointment.where(id: params['id'], patient_id: current_user.id).first
     halt_json_error 404, NOT_FOUND_MESSAGE unless appointment
 
-    halt_json_error 422, ALREADY_FINAL_MESSAGE unless Appointment::OCCUPYING_STATUSES.include?(appointment.status)
+    halt_json_error 422, ALREADY_FINAL_MESSAGE unless Appointment::CANCELLABLE_STATUSES.include?(appointment.status)
 
     appointment.update(status: 'cancelled')
     json(appointment_json(appointment))

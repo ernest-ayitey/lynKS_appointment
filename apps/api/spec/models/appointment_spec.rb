@@ -41,8 +41,12 @@ RSpec.describe Appointment do
     expect(appointment.patient.id).not_to eq(appointment.doctor.id)
   end
 
-  it 'defines OCCUPYING_STATUSES as exactly pending and approved' do
-    expect(Appointment::OCCUPYING_STATUSES).to eq(%w[pending approved])
+  it 'defines OCCUPYING_STATUSES as exactly pending, approved, and arrived' do
+    expect(Appointment::OCCUPYING_STATUSES).to eq(%w[pending approved arrived])
+  end
+
+  it 'defines CANCELLABLE_STATUSES as exactly pending and approved' do
+    expect(Appointment::CANCELLABLE_STATUSES).to eq(%w[pending approved])
   end
 
   def build_appointment(overrides = {})
@@ -72,6 +76,11 @@ RSpec.describe Appointment do
     appointment = build_appointment(status: 'bogus')
     expect(appointment).not_to be_valid
     expect(appointment.errors[:status]).not_to be_empty
+  end
+
+  it 'accepts arrived as a valid status' do
+    appointment = build_appointment(status: 'arrived')
+    expect(appointment).to be_valid
   end
 
   it 'rejects a decline_reason_code outside the known set, but allows nil' do

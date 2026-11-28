@@ -606,6 +606,16 @@ RSpec.describe 'GET /api/v1/appointments and GET /api/v1/appointments/:id' do
       end
     end
 
+    it "404/422s a cancel attempt on an arrived appointment the same way an already-completed one 422s" do
+      appointment = create_appointment(patient: patient, status: 'arrived')
+
+      cancel_appointment(patient_token, appointment.id)
+
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)['error']).to eq('This appointment can no longer be cancelled')
+      expect(appointment.refresh.status).to eq('arrived')
+    end
+
     it "404s for another patient's appointment" do
       appointment = create_appointment(patient: other_patient)
 
