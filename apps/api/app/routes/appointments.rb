@@ -63,6 +63,15 @@ class AppointmentRoutes < ApiRoutes
   # above.
   before('/doctor/appointments') { authenticate!; require_role!('doctor') }
 
+  # Two more distinct literal paths, for Task 4's dashboard summary
+  # endpoints. A single `before('/doctor/dashboard')` would NOT also cover
+  # these — per the `before 'path'`-is-not-a-prefix comment above, that
+  # filter only matches the bare `/doctor/dashboard` path, which this file
+  # never routes — so each sub-path gets its own filter, same as every
+  # other grouping in this file.
+  before('/doctor/dashboard/stats') { authenticate!; require_role!('doctor') }
+  before('/doctor/dashboard/emails') { authenticate!; require_role!('doctor') }
+
   before('/appointments') do
     if request.body
       request.body.rewind
@@ -300,6 +309,56 @@ class AppointmentRoutes < ApiRoutes
     appointment.update(status: new_status, visit_notes: visit_notes)
     approved_by_user = appointment.decided_by_user_id && User[appointment.decided_by_user_id]
     json(doctor_appointment_json(appointment, approved_by: approved_by_user))
+  end
+
+  # A dashboard summary of the doctor's own workload. `patients_today` and
+  # `this_week` are NOT filtered by status (per this task's brief) — every
+  # appointment dated today/this-week counts toward them, regardless of
+  # pending/approved/declined/etc. "This week" reuses the frontend's
+  # existing Monday-Sunday `startOfWeek`/`endOfWeek` convention
+  # (doctor-appointments.page.tsx's `dateRangeForPreset('this_week')`)
+  # rather than inventing a second week-boundary definition server-side;
+  # `Date#cwday` (ISO 8601 day-of-week, 1=Monday..7=Sunday) gives Monday
+  # without a case split on Sunday the way `Date#wday` (0=Sunday) would
+  # need.
+  get '/doctor/dashboard/stats' do
+    today = Date.today
+    week_start = today - (today.cwday - 1)
+    week_end = week_start + 6
+    month_start = Date.new(today.year, today.month, 1)
+    month_end = Date.new(today.year, today.month, -1)
+
+    json(
+      patients_today: distinct_patient_count(today..today),
+      this_week: distinct_patient_count(week_start..week_end),
+      pending: Appointment.where(doctor_id: current_user.id, status: 'pending').count,
+      available_days_this_month: DoctorAvailabilityDay.where(user_id: current_user.id,
+                                                              date: month_start..month_end,
+                                                              is_available: true).count
+    )
+  end
+
+  # The doctor's own 5 most recently sent appointment-related emails,
+  # newest first. Scoped to this doctor via their own appointment ids
+  # first (the same select-ids-then-`where id:`-list shape already used by
+  # `filter_by_search`/`filter_by_patient_name` below) rather than a SQL
+  # join across `appointment_emails`/`appointments` — this file has no
+  # existing join precedent to follow, and this shape does. An empty id
+  # list is handled the same way Sequel always handles an empty `IN`
+  # list — it matches zero rows rather than erroring — so a doctor with no
+  # appointments at all gets `emails: []`, not a 500.
+  get '/doctor/dashboard/emails' do
+    appointment_ids = Appointment.where(doctor_id: current_user.id).select_map(:id)
+    emails = AppointmentEmail.where(appointment_id: appointment_ids)
+                              .order(Sequel.desc(:sent_at))
+                              .limit(5)
+                              .all
+
+    # One bulk hash for the `ref` lookup below, same N+1-avoidance pattern
+    # as `approved_by_by_id`/`departments_by_id` elsewhere in this file.
+    appointments_by_id = Appointment.where(id: emails.map(&:appointment_id).uniq).as_hash(:id)
+
+    json(emails: emails.map { |e| doctor_dashboard_email_json(e, appointments_by_id[e.appointment_id]) })
   end
 
   helpers do
@@ -540,6 +599,33 @@ class AppointmentRoutes < ApiRoutes
       years -= 1 if today.month < date_of_birth.month ||
                     (today.month == date_of_birth.month && today.day < date_of_birth.day)
       years
+    end
+
+    # `COUNT(DISTINCT patient_id)` over this doctor's appointments in
+    # `date_range`, so a patient with two appointments the same day counts
+    # once. NOT the same as `.distinct.count(:patient_id)`: in Sequel, a
+    # bare `.distinct` marks `SELECT DISTINCT *` (every column), and
+    # `.count(:patient_id)` then runs `COUNT(patient_id)` over THAT
+    # subquery — which, since `id` is unique, is just the total row count,
+    # not a distinct-patient count. Restricting the `SELECT` to
+    # `patient_id` first, THEN marking it `.distinct`, makes the subquery
+    # itself `SELECT DISTINCT patient_id ...`, so the outer `.count`
+    # correctly counts distinct patients. Verified against the generated
+    # SQL for both forms before writing this.
+    def distinct_patient_count(date_range)
+      Appointment.where(doctor_id: current_user.id, date: date_range).select(:patient_id).distinct.count
+    end
+
+    # The `GET /doctor/dashboard/emails` shape: the raw `AppointmentEmail`
+    # row plus its `ref`, reusing `ref_for` above via the row's parent
+    # appointment rather than a second ref format — per this task's brief.
+    def doctor_dashboard_email_json(email, appointment)
+      {
+        recipient_email: email.recipient_email,
+        subject: email.subject,
+        sent_at: email.sent_at.iso8601,
+        ref: ref_for(appointment)
+      }
     end
   end
 end
