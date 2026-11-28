@@ -1058,6 +1058,44 @@ RSpec.describe 'GET /api/v1/doctor/dashboard/stats and GET /api/v1/doctor/dashbo
       expect(JSON.parse(last_response.body)['patients_today']).to eq(1)
     end
 
+    # Reviewer finding: `patients_today`/`this_week` must share
+    # `GET /doctor/appointments`' own worklist-status filter
+    # (`DOCTOR_WORKLIST_STATUSES`) — a `declined` or `cancelled` appointment
+    # never occupies the doctor's time, and a `pending` one is already
+    # reported separately by the `pending` stat, so none of the three
+    # should also inflate `patients_today`.
+    it 'does not count a declined appointment dated today toward patients_today' do
+      today = Date.today
+      create_appointment(patient: patient, date: today, time: '09:00', status: 'declined')
+
+      get_stats(doctor_token)
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['patients_today']).to eq(0)
+    end
+
+    it 'does not count a cancelled appointment dated today toward patients_today' do
+      today = Date.today
+      create_appointment(patient: patient, date: today, time: '09:00', status: 'cancelled')
+
+      get_stats(doctor_token)
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)['patients_today']).to eq(0)
+    end
+
+    it 'does not count a pending appointment dated today toward patients_today (it is reported separately by the pending stat)' do
+      today = Date.today
+      create_appointment(patient: patient, date: today, time: '09:00', status: 'pending')
+
+      get_stats(doctor_token)
+
+      expect(last_response.status).to eq(200)
+      body = JSON.parse(last_response.body)
+      expect(body['patients_today']).to eq(0)
+      expect(body['pending']).to eq(1)
+    end
+
     %w[patient records].each do |role|
       it "rejects a #{role} role with 403" do
         token = role == 'patient' ? patient_token : records_token

@@ -24,6 +24,18 @@ class AppointmentRoutes < ApiRoutes
   PATCHABLE_STATUSES = %w[arrived completed no_show].freeze
   VISIT_NOTES_TOO_LONG_MESSAGE = 'Visit notes must be 255 characters or fewer'
 
+  # The statuses that represent a doctor's actual worklist of visits they
+  # still need to close out or already have: `approved` (booked, upcoming
+  # or today), `arrived` (checked in, awaiting the visit), `completed`, and
+  # `no_show`. `pending`/`declined`/`cancelled` never occupy a doctor's
+  # time and are deliberately excluded. Shared by every doctor-facing query
+  # in this file that counts or lists a doctor's appointments, so
+  # `GET /doctor/appointments` and `GET /doctor/dashboard/stats` can never
+  # drift apart on what "a doctor's appointment" means — which is exactly
+  # how the dashboard stat cards once double-counted a `pending`/`declined`/
+  # `cancelled` row that `GET /doctor/appointments` had already excluded.
+  DOCTOR_WORKLIST_STATUSES = %w[approved arrived completed no_show].freeze
+
   ISO_DATE = /\A\d{4}-\d{2}-\d{2}\z/
 
   # Path-scoped rather than a blanket `before`, for the same Rack::Cascade
@@ -233,17 +245,13 @@ class AppointmentRoutes < ApiRoutes
     json(appointment_json(appointment))
   end
 
-  # The doctor's own appointments, restricted to the statuses relevant to a
-  # doctor's worklist of visits they still need to close out or already
-  # have: `approved` (booked, upcoming or today), `arrived` (checked in,
-  # awaiting the visit), `completed`, and `no_show`.
-  # `pending`/`declined`/`cancelled` never occupy a doctor's time and are
-  # deliberately excluded — this is not the same list as a patient's
-  # `GET /appointments`, which shows every status. No pagination, same
+  # The doctor's own appointments, restricted to `DOCTOR_WORKLIST_STATUSES`
+  # above — this is not the same list as a patient's `GET /appointments`,
+  # which shows every status. No pagination, same
   # `total`-is-just-the-filtered-count contract as `GET /appointments`
   # above.
   get '/doctor/appointments' do
-    dataset = Appointment.where(doctor_id: current_user.id, status: %w[approved arrived completed no_show])
+    dataset = Appointment.where(doctor_id: current_user.id, status: DOCTOR_WORKLIST_STATUSES)
     dataset = filter_by_patient_name(dataset, params['search'])
     dataset = filter_by_date_range(dataset, params['from'], params['to'])
 
@@ -312,10 +320,14 @@ class AppointmentRoutes < ApiRoutes
   end
 
   # A dashboard summary of the doctor's own workload. `patients_today` and
-  # `this_week` are NOT filtered by status (per this task's brief) — every
-  # appointment dated today/this-week counts toward them, regardless of
-  # pending/approved/declined/etc. "This week" reuses the frontend's
-  # existing Monday-Sunday `startOfWeek`/`endOfWeek` convention
+  # `this_week` are restricted to `DOCTOR_WORKLIST_STATUSES` — the same
+  # worklist-status definition `GET /doctor/appointments` above already
+  # established — so these stat cards never count a `pending` request still
+  # awaiting Records, nor a `declined`/`cancelled` one that will never
+  # occupy the doctor's time; `pending` is reported separately by the
+  # `pending` stat below, and double-counting it here as well would make
+  # the same row show up in two cards on one screen. "This week" reuses the
+  # frontend's existing Monday-Sunday `startOfWeek`/`endOfWeek` convention
   # (doctor-appointments.page.tsx's `dateRangeForPreset('this_week')`)
   # rather than inventing a second week-boundary definition server-side;
   # `Date#cwday` (ISO 8601 day-of-week, 1=Monday..7=Sunday) gives Monday
@@ -601,19 +613,25 @@ class AppointmentRoutes < ApiRoutes
       years
     end
 
-    # `COUNT(DISTINCT patient_id)` over this doctor's appointments in
-    # `date_range`, so a patient with two appointments the same day counts
-    # once. NOT the same as `.distinct.count(:patient_id)`: in Sequel, a
-    # bare `.distinct` marks `SELECT DISTINCT *` (every column), and
-    # `.count(:patient_id)` then runs `COUNT(patient_id)` over THAT
-    # subquery — which, since `id` is unique, is just the total row count,
-    # not a distinct-patient count. Restricting the `SELECT` to
-    # `patient_id` first, THEN marking it `.distinct`, makes the subquery
-    # itself `SELECT DISTINCT patient_id ...`, so the outer `.count`
-    # correctly counts distinct patients. Verified against the generated
-    # SQL for both forms before writing this.
+    # `COUNT(DISTINCT patient_id)` over this doctor's `DOCTOR_WORKLIST_STATUSES`
+    # appointments in `date_range`, so a patient with two appointments the
+    # same day counts once. The status filter matters just as much as the
+    # date range: without it, a `pending` request still awaiting Records,
+    # or one Records already `declined`/the patient `cancelled`, would
+    # count toward "Patients today" even though it will never occupy this
+    # doctor's time — and a `pending` one would then double-count against
+    # the separate `pending` stat too. NOT the same as
+    # `.distinct.count(:patient_id)`: in Sequel, a bare `.distinct` marks
+    # `SELECT DISTINCT *` (every column), and `.count(:patient_id)` then
+    # runs `COUNT(patient_id)` over THAT subquery — which, since `id` is
+    # unique, is just the total row count, not a distinct-patient count.
+    # Restricting the `SELECT` to `patient_id` first, THEN marking it
+    # `.distinct`, makes the subquery itself `SELECT DISTINCT patient_id
+    # ...`, so the outer `.count` correctly counts distinct patients.
+    # Verified against the generated SQL for both forms before writing this.
     def distinct_patient_count(date_range)
-      Appointment.where(doctor_id: current_user.id, date: date_range).select(:patient_id).distinct.count
+      Appointment.where(doctor_id: current_user.id, date: date_range, status: DOCTOR_WORKLIST_STATUSES)
+                 .select(:patient_id).distinct.count
     end
 
     # The `GET /doctor/dashboard/emails` shape: the raw `AppointmentEmail`

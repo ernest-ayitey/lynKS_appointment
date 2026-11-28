@@ -229,6 +229,24 @@ RSpec.describe 'GET/PUT /api/v1/doctor/availability' do
         expect(last_response.status).to eq(200)
         expect(DoctorAvailabilityDay.where(user_id: doctor.id, date: date).count).to eq(0)
       end
+
+      # Reviewer finding: an `arrived` patient is already physically at the
+      # clinic -- more locked-in than merely `approved` -- so this must
+      # block closing the day exactly the same way the `approved` case
+      # above does.
+      it 'rejects the whole request when one unset date has an arrived appointment, deleting nothing' do
+        locked_date = Date.today + 10
+        other_date = Date.today + 11
+        DoctorAvailabilityDay.create(user_id: doctor.id, date: locked_date)
+        DoctorAvailabilityDay.create(user_id: doctor.id, date: other_date)
+        create_appointment(status: 'arrived', date: locked_date)
+
+        put_availability(TokenService.issue_access_token(doctor),
+                          { unset: [locked_date.iso8601, other_date.iso8601] })
+        expect(last_response.status).to eq(422)
+        expect(DoctorAvailabilityDay.where(user_id: doctor.id, date: locked_date).count).to eq(1)
+        expect(DoctorAvailabilityDay.where(user_id: doctor.id, date: other_date).count).to eq(1)
+      end
     end
   end
 end
